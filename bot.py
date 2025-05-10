@@ -1,8 +1,7 @@
+import os
 import discord
 from discord.ext import commands
-from discord import app_commands
-import os
-
+from discord import app_commands, Attachment
 from ocr_utils import ocr_vs
 
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -10,28 +9,32 @@ GUILD_ID = os.getenv("GUILD_ID")
 
 class VSBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=discord.Intents.default())
-    
+        intents = discord.Intents.default()
+        super().__init__(command_prefix="!", intents=intents)
+
     async def setup_hook(self):
-        @app_commands.command(name="vs", description="Vyhodnotí body hráčů z obrázku.")
-        async def vs(interaction: discord.Interaction, image: discord.Attachment):
+        guild = discord.Object(id=int(GUILD_ID))
+
+        # Odstraníme staré příkazy a znovu zaregistrujeme /vs
+        self.tree.clear_commands(guild=guild)
+
+        @app_commands.command(name="vs", description="Zpracuj screenshot VS a vypiš body")
+        @app_commands.describe(image="Obrázek se screenshotem VS")
+        async def vs(interaction: discord.Interaction, image: Attachment):
             await interaction.response.defer()
             try:
                 image_bytes = await image.read()
                 vysledky = ocr_vs(image_bytes)
                 if vysledky:
-                    await interaction.followup.send(f"Výsledky:\n{vysledky}")
+                    await interaction.followup.send(f"**Výsledky:**\n{vysledky}")
                 else:
-                    await interaction.followup.send("Nepodařilo se najít žádná data.")
+                    await interaction.followup.send("❌ Nepodařilo se rozpoznat žádná data.")
             except Exception as e:
-                await interaction.followup.send(f"Nastala chyba při zpracování obrázku: {e}")
+                await interaction.followup.send(f"❌ Chyba: {e}")
 
-        self.tree.add_command(vs)
-
-        # Registrace příkazů na konkrétní server (rychlejší propagace než globální sync)
-        guild = discord.Object(id=int(GUILD_ID))
+        self.tree.add_command(vs, guild=guild)
         await self.tree.sync(guild=guild)
-        print(f"Příkaz 'vs' byl synchronizován pro GUILD ID {GUILD_ID}")
+        print(f"✅ Slash příkaz '/vs' byl znovu synchronizován pro GUILD {GUILD_ID}.")
 
 bot = VSBot()
 bot.run(TOKEN)
