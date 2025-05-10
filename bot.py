@@ -1,41 +1,45 @@
-import os
+
 import discord
 from discord.ext import commands
-from discord import app_commands
+from discord import app_commands, Attachment
 from PIL import Image
-import pytesseract
 import io
+import os
+
+from ocr_utils import ocr_vs  # importuj OCR funkci z vlastního souboru
 
 TOKEN = os.getenv("DISCORD_TOKEN")
+GUILD_ID = os.getenv("GUILD_ID")
 
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
+class VSBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        super().__init__(command_prefix="!", intents=intents)
+        self.tree = app_commands.CommandTree(self)
 
-@bot.event
-async def on_ready():
-    print(f"Bot přihlášen jako {bot.user}")
-    try:
-        synced = await bot.tree.sync()
-        print(f"Synchronizováno {len(synced)} příkazů.")
-    except Exception as e:
-        print(f"Chyba při synchronizaci: {e}")
+    async def setup_hook(self):
+        # Registrace příkazů jen pro konkrétní server (guild)
+        guild = discord.Object(id=int(GUILD_ID))
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
 
-@bot.tree.command(name="vs", description="Načti VS body z obrázku")
-@app_commands.describe(zkratka="Např. IST", tyden="Např. 19", den="Např. Čtvrtek")
-async def vs(interaction: discord.Interaction, zkratka: str, tyden: int, den: str):
+bot = VSBot()
+
+@bot.tree.command(name="vs", description="Zpracuj VS screenshot")
+@app_commands.describe(obrazek="Nahraj screenshot s výsledky VS")
+async def vs(interaction: discord.Interaction, obrazek: Attachment):
     await interaction.response.defer()
-    if not interaction.attachments:
-        await interaction.followup.send("❌ Musíš připojit obrázek.")
-        return
-
-    attachment = interaction.attachments[0]
-    img_bytes = await attachment.read()
-
     try:
-        image = Image.open(io.BytesIO(img_bytes))
-        ocr_text = pytesseract.image_to_string(image)
-        await interaction.followup.send(f"📜 Výsledek OCR:\n```{ocr_text[:1900]}```")
+        # Načti obrázek z přílohy
+        img_bytes = await obrazek.read()
+        img = Image.open(io.BytesIO(img_bytes))
+
+        # Použij OCR
+        vysledky = ocr_vs(img)
+
+        # Odešli výsledek
+        await interaction.followup.send(f"Výsledek OCR:\n```{vysledky}```")
     except Exception as e:
-        await interaction.followup.send(f"❌ Chyba při zpracování obrázku: {e}")
+        await interaction.followup.send(f"Nastala chyba při zpracování obrázku: {e}")
 
 bot.run(TOKEN)
