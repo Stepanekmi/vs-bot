@@ -4,28 +4,27 @@ from discord.ext import commands
 from PIL import Image
 import io
 
-from ocr_utils import ocr_vs  # zůstává implementace OCR.Space
+from ocr_utils import ocr_vs
 
+# Načtení tokenu bota z prostředí
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-# Povolit čtení obsahu zpráv (nutné pro prefixové příkazy)
+# Nastavení intentů (pro čtení obsahu zpráv)
 intents = discord.Intents.default()
 intents.message_content = True
 
+# Prefix bot: příkazy začínají '!'
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f"✅ Bot přihlášen jako {bot.user}")
+    print(f"✅ Bot je online jako {bot.user}")
 
 @bot.command(name="vs")
 async def vs(ctx, zkratka: str, tyden: int, den: str):
-    \"\"\"Použití: 
-       1) Nahraj screenshot do stejné zprávy 
-       2) Napiš: !vs IST 19 Čtvrtek
-    \"\"\"
+    # Použití: připoj screenshot k dané zprávě a napiš: !vs IST 19 Čtvrtek
     if not ctx.message.attachments:
-        await ctx.send("❗ Prosím, přidej k této zprávě **screenshot**.")
+        await ctx.send("❗ Prosím, přidej k této zprávě screenshot.")
         return
 
     attachment = ctx.message.attachments[0]
@@ -38,4 +37,5 @@ async def vs(ctx, zkratka: str, tyden: int, den: str):
     header = f"📊 VS | {den} | Týden {tyden} | {zkratka}"
     await ctx.send(f"{header}\n{vysledky}")
 
+# Spuštění bota
 bot.run(TOKEN)
