@@ -2,13 +2,11 @@ import discord
 from discord.ext import commands
 import os
 import pandas as pd
-import re
 
 DB_FILE = "vs_data.csv"
 if not os.path.exists(DB_FILE):
     pd.DataFrame(columns=["name", "points", "date", "tag"]).to_csv(DB_FILE, index=False)
 
-# Dočasná paměť pro nahrávání textu
 upload_session = {}
 
 def parse_text_block(text):
@@ -17,17 +15,22 @@ def parse_text_block(text):
     current_name = None
     for line in lines:
         line = line.strip()
-        if not line:
+
+        # ignoruj prázdné řádky, [RoP], pozice jako "3", "6", apod.
+        if not line or "[RoP]" in line or line.isdigit():
             continue
-        if any(c.isalpha() for c in line) and not any(c.isdigit() for c in line):
-            current_name = line
-        elif "," in line and any(c.isdigit() for c in line) and current_name:
-            try:
-                points = int("".join(filter(str.isdigit, line)))
-                results.append((current_name, points))
-                current_name = None
-            except:
-                continue
+
+        # pokud je to řádek s čárkami a čísly, považuj to za body
+        if "," in line and any(c.isdigit() for c in line):
+            if current_name:
+                try:
+                    points = int("".join(filter(str.isdigit, line)))
+                    results.append((current_name, points))
+                    current_name = None
+                except:
+                    continue
+        else:
+            current_name = line  # považuj za jméno
     return results
 
 def save_to_db(records, date, tag):
