@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 import os
 import pandas as pd
+import matplotlib.pyplot as plt
+import io
 
 DB_FILE = "vs_data.csv"
 if not os.path.exists(DB_FILE):
@@ -15,12 +17,8 @@ def parse_text_block(text):
     current_name = None
     for line in lines:
         line = line.strip()
-
-        # ignoruj prázdné řádky, [RoP], pozice jako "3", "6", apod.
         if not line or "[RoP]" in line or line.isdigit():
             continue
-
-        # pokud je to řádek s čárkami a čísly, považuj to za body
         if "," in line and any(c.isdigit() for c in line):
             if current_name:
                 try:
@@ -30,7 +28,7 @@ def parse_text_block(text):
                 except:
                     continue
         else:
-            current_name = line  # považuj za jméno
+            current_name = line
     return results
 
 def save_to_db(records, date, tag):
@@ -41,31 +39,60 @@ def save_to_db(records, date, tag):
     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
     df.to_csv(DB_FILE, index=False)
 
-def get_top_day():
+def plot_and_return_image(df, title):
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.barh(df["name"], df["points"])
+    ax.set_title(title)
+    ax.invert_yaxis()
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+    plt.close(fig)
+    return discord.File(fp=buf, filename="graf.png")
+
+def get_top_day(graf=False):
     df = pd.read_csv(DB_FILE)
     if df.empty:
-        return "Žádná data."
+        return "Žádná data.", None
     latest = df["date"].max()
     df_latest = df[df["date"] == latest].sort_values(by="points", ascending=False)
-    return "\n".join([f"{row['name']}: {row['points']}" for _, row in df_latest.iterrows()])
+    text = "\n".join([f"{row['name']}: {row['points']}" for _, row in df_latest.iterrows()])
+    file = plot_and_return_image(df_latest, f"TOP hráči – {latest}") if graf else None
+    return text, file
 
-def get_top_tag(tag):
+def get_top_tag(tag, graf=False):
     df = pd.read_csv(DB_FILE)
     df_tag = df[df["tag"] == tag]
     if df_tag.empty:
-        return f"Žádná data pro zkratku {tag}."
+        return f"Žádná data pro zkratku {tag}.", None
     df_grouped = df_tag.groupby("name")["points"].sum().reset_index().sort_values(by="points", ascending=False)
-    return "\n".join([f"{row['name']}: {row['points']}" for _, row in df_grouped.iterrows()])
+    text = "\n".join([f"{row['name']}: {row['points']}" for _, row in df_grouped.iterrows()])
+    file = plot_and_return_image(df_grouped, f"TOP hráči – {tag}") if graf else None
+    return text, file
 
-def get_player_stats(name):
+def get_player_stats(name, graf=False):
     df = pd.read_csv(DB_FILE)
     df_player = df[df["name"].str.lower() == name.lower()]
     if df_player.empty:
-        return f"Nebyly nalezeny žádné statistiky pro hráče {name}."
+        return f"Nebyly nalezeny žádné statistiky pro hráče {name}.", None
     df_sorted = df_player.sort_values(by="date")
-    return "\n".join([f"{row['date']} ({row['tag']}): {row['points']}" for _, row in df_sorted.iterrows()])
+    text = "\n".join([f"{row['date']} ({row['tag']}): {row['points']}" for _, row in df_sorted.iterrows()])
+    if graf:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.plot(df_sorted["date"], df_sorted["points"], marker='o')
+        ax.set_title(f"Vývoj skóre – {name}")
+        ax.set_ylabel("Body")
+        ax.set_xlabel("Datum")
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
+        plt.close(fig)
+        return text, discord.File(fp=buf, filename="graf.png")
+    return text, None
 
-# Discord Bot Setup
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -92,19 +119,39 @@ async def vs(ctx, subcommand: str, *args):
         await ctx.send(f"Uloženo {len(session['records'])} unikátních hráčů.")
     elif subcommand == "top":
         if not args:
-            await ctx.send("Použití: !vs top <day|zkratka>")
+            await ctx.send("Použití: !vs top <day|zkratka> [graf]")
             return
+        graf = "graf" in args
         if args[0] == "day":
-            await ctx.send(get_top_day())
+            text, file = get_top_day(graf=graf)
         else:
-            await ctx.send(get_top_tag(args[0]))
+            text, file = get_top_tag(args[0], graf=graf)
+        await ctx.send(text)
+        if file:
+            await ctx.send(file=file)
     elif subcommand == "stats":
         if not args:
-            await ctx.send("Použití: !vs stats <jméno hráče>")
+            await ctx.send("Použití: !vs stats <jméno hráče> [graf]")
             return
-        await ctx.send(get_player_stats(" ".join(args)))
+        graf = "graf" in args
+        name = " ".join(arg for arg in args if arg != "graf")
+        text, file = get_player_stats(name, graf=graf)
+        await ctx.send(text)
+        if file:
+            await ctx.send(file=file)
+    elif subcommand == "help":
+        help_text = (
+            "**Dostupné příkazy:**\n"
+            "`!vs start <datum> <zkratka>` – začni nahrávání výsledků\n"
+            "`!vs finish` – ulož záznamy\n"
+            "`!vs top day [graf]` – top hráči za poslední den\n"
+            "`!vs top <zkratka> [graf]` – top hráči se zkratkou\n"
+            "`!vs stats <jméno> [graf]` – statistika hráče\n"
+            "`!vs help` – tento přehled"
+        )
+        await ctx.send(help_text)
     else:
-        await ctx.send("Neznámý pod-příkaz.")
+        await ctx.send("Neznámý pod-příkaz. Použij `!vs help`.")
 
 @bot.event
 async def on_message(message):
