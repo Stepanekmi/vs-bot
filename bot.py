@@ -22,7 +22,7 @@ async def on_ready():
 
 @bot.command(name="vs")
 async def vs(ctx, zkratka: str, tyden: int, den: str):
-    # Použití: připoj screenshot k dané zprávě a napiš: !vs IST 19 Čtvrtek
+    """Použití: připoj screenshot k dané zprávě a napiš: !vs IST 19 Čtvrtek"""
     if not ctx.message.attachments:
         await ctx.send("❗ Prosím, přidej k této zprávě screenshot.")
         return
@@ -31,8 +31,9 @@ async def vs(ctx, zkratka: str, tyden: int, den: str):
     img_bytes = await attachment.read()
     img = Image.open(io.BytesIO(img_bytes))
 
-    await ctx.trigger_typing()
-    vysledky = ocr_vs(img)
+    # Zobrazení indikátoru psaní během OCR
+    async with ctx.typing():
+        vysledky = ocr_vs(img)
 
     header = f"📊 VS | {den} | Týden {tyden} | {zkratka}"
     await ctx.send(f"{header}\n{vysledky}")
