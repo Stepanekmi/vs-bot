@@ -18,8 +18,10 @@ class VSBot(commands.Bot):
 
     async def setup_hook(self):
         guild = discord.Object(id=int(GUILD_ID))
+        self.tree.clear_commands(guild=guild)  # Vyčistí staré příkazy
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
+        print("✅ Slash příkazy úspěšně synchronizovány.")
 
 bot = VSBot()
 
