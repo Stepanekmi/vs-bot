@@ -1,4 +1,3 @@
 discord.py
 pytesseract
 pillow
-easyocr
