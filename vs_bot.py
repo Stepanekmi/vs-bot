@@ -15,18 +15,23 @@ def process_vs_images(image_bytes, date, tag):
 
     response = requests.post(url, files={"file": image_bytes}, data={"apikey": api_key, "language": "eng", "OCREngine": 2})
     parsed = response.json()
-    
+
+    # DEBUG výpis pro Render logy
+    print("=== OCR RESPONSE ===")
+    print(parsed)
+
     results = []
     if parsed["IsErroredOnProcessing"]:
         return results
-    
+
     for line in parsed["ParsedResults"][0]["ParsedText"].split("\n"):
         if "[RoP]" in line and any(c.isdigit() for c in line):
             try:
                 name = line.split("[RoP]")[0].strip()
                 points = int("".join(filter(str.isdigit, line.split("[RoP]")[1])))
                 results.append({"name": name, "points": points, "date": date, "tag": tag})
-            except:
+            except Exception as e:
+                print(f"Chyba při parsování řádku: {line} — {e}")
                 continue
 
     # Uložit do CSV
