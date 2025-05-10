@@ -1,61 +1,41 @@
+import easyocr
 import cv2
-import pytesseract
-import re
+import numpy as np
 
-# Pokud nemáš tesseract v PATH, uprav sem:
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+reader = easyocr.Reader(['en'], gpu=False)
 
-def parse_vs_image(img_path: str, start_rank: int = 1):
-    img = cv2.imread(img_path)
-    if img is None:
-        raise FileNotFoundError(f"Nepodařilo se načíst obrázek: {img_path}")
-    h, w = img.shape[:2]
-
-    # Vypočteme posuny a velikost řádku stejně, jak jsme testovali
-    top_offset    = int(h * 0.20)
-    bottom_offset = int(h * 0.05)
-    region_h      = h - top_offset - bottom_offset
-    row_h         = region_h // 7
-
-    name_x1, name_x2 = int(w * 0.20), int(w * 0.55)
-    pts_x1,  pts_x2  = int(w * 0.70), int(w * 0.95)
+def parse_vs_image(img_bytes: bytes) -> list[tuple[str, str, str]]:
+    arr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
     rows = []
-    for i in range(7):
-        y1 = top_offset + i * row_h
-        y2 = y1 + row_h
+    row_positions = [
+        (150, 120), (280, 120), (410, 120), (540, 120),
+        (670, 120), (800, 120), (930, 120), (1060, 120),
+    ]
+    rank_box = (100, 0, 100, 120)
+    name_box = (200, 0, 400, 120)
+    pts_box  = (600, 0, 200, 120)
 
-        roi_name = img[y1:y2, name_x1:name_x2]
-        roi_pts  = img[y1:y2, pts_x1:pts_x2]
+    for y, h in row_positions:
+        roi = img[y:y+h, :]
+        x, dy, w, dh = rank_box
+        rank_img = roi[dy:dy+dh, x:x+w]
+        rank_txt = reader.readtext(rank_img, detail=0, paragraph=False)
+        rank = rank_txt[0] if rank_txt else ""
 
-        name = pytesseract.image_to_string(
-            roi_name,
-            config='--psm 7 -c tessedit_char_blacklist=!?|/\\'
-        ).strip()
-        pts = pytesseract.image_to_string(
-            roi_pts,
-            config='--psm 7 -c tessedit_char_whitelist=0123456789,'
-        ).strip()
+        x, dy, w, dh = name_box
+        name_img = roi[dy:dy+dh, x:x+w]
+        name_txt = reader.readtext(name_img, detail=0)
+        name = name_txt[0] if name_txt else ""
 
-        # Čištění
-        name = re.sub(r'[^A-Za-z0-9\[\]áčďéěíňóřšťúůýžĂÂÇÉÍÓÚ]', '', name)
-        pts  = re.sub(r'[^0-9,]', '', pts)
+        x, dy, w, dh = pts_box
+        pts_img = roi[dy:dy+dh, x:x+w]
+        pts_txt = reader.readtext(pts_img, detail=0)
+        pts = pts_txt[0] if pts_txt else ""
 
-        if name and pts:
-            rows.append((name, pts))
+        if rank and name and pts:
+            pts = pts.replace(" ", "").replace(".", ",")
+            rows.append((rank.strip(), name.strip(), pts.strip()))
 
-    # Odstraníme duplicitní Stepanekmi
-    seen = set()
-    clean = []
-    for name, pts in rows:
-        key = name.lower()
-        if key.startswith('stepanekmi') and key in seen:
-            continue
-        clean.append((name, pts))
-        seen.add(key)
-
-    # Složení tabulky s ranky
-    table = []
-    for idx, (name, pts) in enumerate(clean):
-        table.append((start_rank + idx, name, pts))
-    return table
+    return rows

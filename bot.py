@@ -2,46 +2,36 @@ import os
 import discord
 from discord.ext import commands
 from ocr_utils import parse_vs_image
-import tempfile
 
-TOKEN      = os.getenv("DISCORD_TOKEN")
-GUILD_ID   = int(os.getenv("GUILD_ID", "0"))  # můžeš nechat 0 pro globální
-COMMAND_CH = os.getenv("COMMAND_CHANNEL", "vs")
-
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="/", intents=intents)
+INTENTS = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=INTENTS)
 
 @bot.command(name="vs")
 async def vs(ctx: commands.Context):
-    # omezíme jen na příslušný kanál
-    if ctx.channel.name != COMMAND_CH:
-        return
+    attachments = ctx.message.attachments[-8:]
+    if not attachments:
+        return await ctx.send("📸 Pošlete mi prosím až 8 snímků z VS jako přílohy k příkazu.")
+    await ctx.send("🔍 Zpracovávám obrázky…")
+    all_rows = []
+    for att in attachments:
+        img_bytes = await att.read()
+        rows = parse_vs_image(img_bytes)
+        all_rows.extend(rows)
 
-    # musí být příloha
-    if not ctx.message.attachments:
-        await ctx.send("Pošli mi prosím obrázek VS pomocí `/vs` + attachment")
-        return
+    best = {}
+    for rank, name, pts in all_rows:
+        pts_int = int(pts.replace(",", ""))
+        if name not in best or pts_int > int(best[name][2].replace(",", "")):
+            best[name] = (rank, name, pts)
+    rows = list(best.values())
+    rows.sort(key=lambda x: int(x[0]))
 
-    att = ctx.message.attachments[0]
-    # podle jména určíme start_rank
-    # očekáváme něco jako vs_ctvrtek1.PNG, vs_ctvrtek2.PNG, ...
-    m = re.search(r'vs.*?(\d+)\.', att.filename, re.IGNORECASE)
-    start = int(m.group(1)) if m else 1
+    header = "| Rank | Commander       | Points      |\n|------|-----------------|-------------|"
+    lines = [f"| {r:<4}| {n:<15}| {p:>11} |" for r, n, p in rows]
+    table = "\n".join([header] + lines)
 
-    # stáhneme do temp
-    tmp = tempfile.NamedTemporaryFile(suffix=os.path.splitext(att.filename)[1], delete=False)
-    await att.save(tmp.name)
+    await ctx.send("**VS Points Ranking**\n" + table)
 
-    try:
-        table = parse_vs_image(tmp.name, start_rank=start)
-        # postneme jako markdown tabulku
-        header = "`| Rank | Commander        | Points       |\n|-----:|:-----------------|-------------:|`"
-        rows = "\n".join(f"`| {r:>4d} | {n:15s} | {p:11s} |`" for r,n,p in table)
-        await ctx.send(header + "\n" + rows)
-    except Exception as e:
-        await ctx.send(f"Nastala chyba při zpracování: {e}")
-    finally:
-        tmp.close()
-        os.unlink(tmp.name)
-
-bot.run(TOKEN)
+if __name__ == "__main__":
+    TOKEN = os.environ["DISCORD_TOKEN"]
+    bot.run(TOKEN)

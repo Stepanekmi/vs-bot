@@ -1,5 +1,4 @@
-discord.py
-pytesseract
-pillow
-requests
-opencv-python
+discord.py>=2.4.0
+easyocr>=1.7
+opencv-python-headless
+numpy
