@@ -1,32 +1,61 @@
+import cv2
+import pytesseract
+import re
 
-import requests
-import base64
-from PIL import Image
-import io
-import os
+# Pokud nemáš tesseract v PATH, uprav sem:
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-# API klíč (volitelně můžeš použít zdarma nebo vlastní)
-OCR_SPACE_API_KEY = os.getenv("OCR_SPACE_API_KEY", "helloworld")  # 'helloworld' je demo klíč s omezením
+def parse_vs_image(img_path: str, start_rank: int = 1):
+    img = cv2.imread(img_path)
+    if img is None:
+        raise FileNotFoundError(f"Nepodařilo se načíst obrázek: {img_path}")
+    h, w = img.shape[:2]
 
-def ocr_vs(pil_image: Image.Image) -> str:
-    buffered = io.BytesIO()
-    pil_image.save(buffered, format="PNG")
-    img_str = base64.b64encode(buffered.getvalue()).decode()
+    # Vypočteme posuny a velikost řádku stejně, jak jsme testovali
+    top_offset    = int(h * 0.20)
+    bottom_offset = int(h * 0.05)
+    region_h      = h - top_offset - bottom_offset
+    row_h         = region_h // 7
 
-    url = "https://api.ocr.space/parse/image"
-    payload = {
-        "base64Image": "data:image/png;base64," + img_str,
-        "language": "eng",
-        "isOverlayRequired": False,
-    }
-    headers = {
-        "apikey": OCR_SPACE_API_KEY
-    }
+    name_x1, name_x2 = int(w * 0.20), int(w * 0.55)
+    pts_x1,  pts_x2  = int(w * 0.70), int(w * 0.95)
 
-    response = requests.post(url, data=payload, headers=headers)
-    try:
-        result = response.json()
-        parsed_text = result["ParsedResults"][0]["ParsedText"]
-        return parsed_text.strip() if parsed_text else "❌ OCR nevrátil žádný text."
-    except Exception as e:
-        return f"❌ Chyba při komunikaci s OCR API: {e}"
+    rows = []
+    for i in range(7):
+        y1 = top_offset + i * row_h
+        y2 = y1 + row_h
+
+        roi_name = img[y1:y2, name_x1:name_x2]
+        roi_pts  = img[y1:y2, pts_x1:pts_x2]
+
+        name = pytesseract.image_to_string(
+            roi_name,
+            config='--psm 7 -c tessedit_char_blacklist=!?|/\\'
+        ).strip()
+        pts = pytesseract.image_to_string(
+            roi_pts,
+            config='--psm 7 -c tessedit_char_whitelist=0123456789,'
+        ).strip()
+
+        # Čištění
+        name = re.sub(r'[^A-Za-z0-9\[\]áčďéěíňóřšťúůýžĂÂÇÉÍÓÚ]', '', name)
+        pts  = re.sub(r'[^0-9,]', '', pts)
+
+        if name and pts:
+            rows.append((name, pts))
+
+    # Odstraníme duplicitní Stepanekmi
+    seen = set()
+    clean = []
+    for name, pts in rows:
+        key = name.lower()
+        if key.startswith('stepanekmi') and key in seen:
+            continue
+        clean.append((name, pts))
+        seen.add(key)
+
+    # Složení tabulky s ranky
+    table = []
+    for idx, (name, pts) in enumerate(clean):
+        table.append((start_rank + idx, name, pts))
+    return table
