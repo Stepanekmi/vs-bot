@@ -1,3 +1,5 @@
 discord.py
 pytesseract
 pillow
+easyocr
+opencv-python-headless
