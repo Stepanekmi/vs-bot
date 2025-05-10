@@ -1,4 +1,4 @@
 discord.py
 pandas
 requests
-python-dotenv
+matplotlib
