@@ -1,0 +1,6 @@
+discord.py
+pandas
+matplotlib
+requests
+flask
+apscheduler
