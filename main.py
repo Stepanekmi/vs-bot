@@ -3,16 +3,16 @@ import os
 import discord
 from discord.ext import commands
 from discord import app_commands
-from threading import Thread
 from vs_slash import setup_vs_commands
 from power_slash import setup_power_commands
+from vs_text_listener import setup_vs_text_listener
 
-# === Konfigurace ===
 GUILD_ID = 1231529219029340234
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-# === Intenty ===
 intents = discord.Intents.default()
+intents.message_content = True  # potřebné pro on_message
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 print("🟢 Bot objekt vytvořen.")
@@ -28,10 +28,10 @@ async def on_ready():
     print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
     print("------")
 
-# === Registrace příkazů ===
+# Registrace VS a POWER příkazů
 setup_vs_commands(bot)
 setup_power_commands(bot)
+setup_vs_text_listener(bot)
 
-# === Spuštění ===
 print("🔑 Spouštím bota s tokenem (část):", TOKEN[:10], "...")
 bot.run(TOKEN)
