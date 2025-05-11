@@ -1,3 +1,4 @@
+
 import os
 import discord
 from discord.ext import commands
@@ -7,16 +8,18 @@ from threading import Thread
 from vs_slash import setup_vs_commands
 from power_slash import setup_power_commands
 
-# ZDE DOSAĎ ID svého Discord serveru
-GUILD_ID = 1231529219029340234  # <--- Sem vlož svoje číslo!
+GUILD_ID = 1231529219029340234  # Tvé ID serveru
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    # Registrace slash příkazů POUZE pro konkrétní server – rychlé
-    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+    try:
+        await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+        print(f"✅ Synced commands to guild {GUILD_ID}")
+    except Exception as e:
+        print(f"❌ Command sync failed: {e}")
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     print("------")
 
