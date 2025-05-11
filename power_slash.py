@@ -4,10 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 
 def shorten(value):
-    try:
-        return round(float(str(value).replace(",", "")) / 1_000_000, 1)
-    except ValueError:
-        return 0.0
+    return round(int(str(value).replace(",", "")) / 1_000_000, 1)
 
 class PowerCommands(commands.Cog):
     def __init__(self, bot):
