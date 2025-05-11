@@ -5,29 +5,32 @@ import discord
 def setup_vs_text_listener(bot):
     @bot.event
     async def on_message(message: discord.Message):
-        # Ignoruj zprávy od bota
         if message.author.bot:
             return
 
-        # Není aktivní session => ignoruj
         session = getattr(bot, "upload_session", None)
         if not session:
             return
 
-        # Extrakce jmen a bodů z textu
-        content = message.content.strip()
-        lines = content.split("\n")
+        lines = message.content.strip().split("\n")
         added = []
 
-        for i in range(len(lines) - 1):
+        i = 0
+        while i + 2 < len(lines):
             name = lines[i].strip()
-            next_line = lines[i + 1].strip()
-            if not name or not next_line:
-                continue
-            if re.match(r"^[\d.,]+$", next_line):
-                points = int(next_line.replace(",", "").replace(".", ""))
-                session["records"][name] = points
-                added.append(f"{name} – {points:,}")
+            # lines[i + 1] is alliance – ignore
+            points_line = lines[i + 2].strip()
+
+            # Validate name and points
+            if name and re.match(r"^[\d.,]+$", points_line):
+                try:
+                    points = int(points_line.replace(",", "").replace(".", ""))
+                    session["records"][name] = points
+                    added.append(f"{name} – {points:,}")
+                except ValueError:
+                    pass
+
+            i += 3  # move to next triplet
 
         if added:
             await message.channel.send("✅ Načteno:\n" + "\n".join(added))
