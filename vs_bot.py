@@ -12,7 +12,7 @@ INFO_CHANNEL_ID = 1231533602194460752
 if not pd.io.common.file_exists(DB_FILE):
     pd.DataFrame(columns=["name", "points", "date", "tag"]).to_csv(DB_FILE, index=False)
 
-bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all(), help_command=None)
 
 upload_session = {}
 r4_list = set()
