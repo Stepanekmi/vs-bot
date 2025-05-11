@@ -2,7 +2,7 @@ import base64
 import requests
 import os
 
-GITHUB_REPO = https://github.com/Stepanekmi/vs-data-store  # změň podle skutečnosti
+GITHUB_REPO = "Stepanekmi/vs-data-store"  # změň podle skutečnosti
 GITHUB_BRANCH = "main"
 GITHUB_API = "https://api.github.com"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
