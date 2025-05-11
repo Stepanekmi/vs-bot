@@ -21,8 +21,9 @@ print("🟢 Bot objekt vytvořen.")
 async def on_ready():
     print("⚡ on_ready triggered")
     try:
-        synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"✅ Synced {len(synced)} commands to guild {GUILD_ID}")
+        await bot.tree.clear_commands(guild=discord.Object(id=GUILD_ID))
+synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+print(f"✅ Synced {len(synced)} commands to guild {GUILD_ID}")
     except Exception as e:
         print(f"❌ Command sync failed: {e}")
     print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
