@@ -85,6 +85,28 @@ async def R4list(ctx, *, text):
     save_r4_list(names)
     await ctx.send(f"Updated R4 list: {', '.join(names)}")
 
+@bot.command(name="help")
+async def custom_help(ctx):
+    help_text = (
+        "**Available !vs commands:**\n"
+        "`!vs start <date> <alliance tag>` – start uploading player results\n"
+        "`!vs finish` – save uploaded results\n"
+        "`!vs top day [graph]` – show top players from the latest day\n"
+        "`!vs top <alliance tag> [graph]` – show top players for this alliance tag\n"
+        "`!vs stats <player name> [graph]` – show stats for this player\n"
+        "`!vs aliance` – list all alliance tags from stored results\n"
+        "`!vs train` – send top player from yesterday to R4/R5 info channel\n"
+        "`!vs R4 <alliance tag>` – send top 2 R4/R5 players for this tag to info channel\n"
+        "`!R4list name1, name2, ...` – update ignored R4/R5 player list\n"
+        "`!help` – show this help message\n\n"
+        "**Available only in channel `angriffs-und-verteidigungsplan`:**\n"
+        "`!poweradd <name> tank <x> plane <y> rocket <z>` – add power\n"
+        "`!powername <name>` – show last power stats and chart\n"
+        "`!powertop` – show top by total and by strongest unit"
+    )
+    await ctx.send(help_text)
+
+
 @bot.event
 async def on_message(message):
     if message.author.bot:
