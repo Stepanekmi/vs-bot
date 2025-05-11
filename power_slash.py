@@ -1,6 +1,7 @@
 
 import discord
 from discord import app_commands
+from discord.ext import commands
 
 def shorten(value):
     return round(float(str(value).replace(",", "")) / 1_000_000, 1)
