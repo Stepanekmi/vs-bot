@@ -1,13 +1,20 @@
+# main.py – spouští bota a oba moduly
+import os
 import discord
 from vs_bot import bot
-import os
-from threading import Thread
+from power_bot import setup_power_commands
 from keepalive import app
+from threading import Thread
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+# Inicializace power příkazů
+setup_power_commands(bot)
 
-def run_flask():
-    app.run(host="0.0.0.0", port=8080)
+# Flask keepalive
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
 
-Thread(target=run_flask).start()
-bot.run(TOKEN)
+Thread(target=run_web).start()
+
+# Spuštění bota
+bot.run(os.getenv("DISCORD_TOKEN"))

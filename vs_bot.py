@@ -1,169 +1,120 @@
+# vs_bot.py – handles all !vs related commands
 import discord
 from discord.ext import commands
-import os
 import pandas as pd
-import matplotlib.pyplot as plt
-import io
+from datetime import datetime, timedelta
+from apscheduler.schedulers.background import BackgroundScheduler
 
 DB_FILE = "vs_data.csv"
-if not os.path.exists(DB_FILE):
+R4_LIST_FILE = "r4_list.txt"
+INFO_CHANNEL_ID = 1231533602194460752
+
+if not pd.io.common.file_exists(DB_FILE):
     pd.DataFrame(columns=["name", "points", "date", "tag"]).to_csv(DB_FILE, index=False)
 
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+
 upload_session = {}
+r4_list = set()
 
-def parse_text_block(text):
-    lines = text.splitlines()
-    results = []
-    current_name = None
-    for line in lines:
-        line = line.strip()
-        if not line or "[RoP]" in line or line.isdigit():
-            continue
-        if "," in line and any(c.isdigit() for c in line):
-            if current_name:
-                try:
-                    points = int("".join(filter(str.isdigit, line)))
-                    results.append((current_name, points))
-                    current_name = None
-                except:
-                    continue
-        else:
-            current_name = line
-    return results
+def load_r4_list():
+    global r4_list
+    try:
+        with open(R4_LIST_FILE, "r") as f:
+            r4_list = set(line.strip() for line in f if line.strip())
+    except:
+        r4_list = set()
 
-def save_to_db(records, date, tag):
-    df = pd.read_csv(DB_FILE)
-    new_rows = []
-    for name, points in records.items():
-        new_rows.append({"name": name, "points": points, "date": date, "tag": tag})
-    df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-    df.to_csv(DB_FILE, index=False)
-
-def plot_and_return_image(df, title):
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.barh(df["name"], df["points"])
-    ax.set_title(title)
-    ax.invert_yaxis()
-    plt.tight_layout()
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png")
-    buf.seek(0)
-    plt.close(fig)
-    return discord.File(fp=buf, filename="graf.png")
-
-def get_top_day(graf=False):
-    df = pd.read_csv(DB_FILE)
-    if df.empty:
-        return "Žádná data.", None
-    latest = df["date"].max()
-    df_latest = df[df["date"] == latest].sort_values(by="points", ascending=False)
-    text = "\n".join([f"{row['name']}: {row['points']}" for _, row in df_latest.iterrows()])
-    file = plot_and_return_image(df_latest, f"TOP hráči – {latest}") if graf else None
-    return text, file
-
-def get_top_tag(tag, graf=False):
-    df = pd.read_csv(DB_FILE)
-    df_tag = df[df["tag"] == tag]
-    if df_tag.empty:
-        return f"Žádná data pro zkratku {tag}.", None
-    df_grouped = df_tag.groupby("name")["points"].sum().reset_index().sort_values(by="points", ascending=False)
-    text = "\n".join([f"{row['name']}: {row['points']}" for _, row in df_grouped.iterrows()])
-    file = plot_and_return_image(df_grouped, f"TOP hráči – {tag}") if graf else None
-    return text, file
-
-def get_player_stats(name, graf=False):
-    df = pd.read_csv(DB_FILE)
-    df_player = df[df["name"].str.lower() == name.lower()]
-    if df_player.empty:
-        return f"Nebyly nalezeny žádné statistiky pro hráče {name}.", None
-    df_sorted = df_player.sort_values(by="date")
-    text = "\n".join([f"{row['date']} ({row['tag']}): {row['points']}" for _, row in df_sorted.iterrows()])
-    if graf:
-        fig, ax = plt.subplots(figsize=(8, 4))
-        ax.plot(df_sorted["date"], df_sorted["points"], marker='o')
-        ax.set_title(f"Vývoj skóre – {name}")
-        ax.set_ylabel("Body")
-        ax.set_xlabel("Datum")
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        buf = io.BytesIO()
-        plt.savefig(buf, format="png")
-        buf.seek(0)
-        plt.close(fig)
-        return text, discord.File(fp=buf, filename="graf.png")
-    return text, None
-
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+def save_r4_list(new_list):
+    global r4_list
+    r4_list = set(new_list)
+    with open(R4_LIST_FILE, "w") as f:
+        for name in r4_list:
+            f.write(name + "\n")
 
 @bot.command()
-async def vs(ctx, subcommand: str, *args):
-    global upload_session
-
-    if subcommand == "start":
+async def vs(ctx, sub: str, *args):
+    if sub == "start":
         if len(args) != 2:
-            await ctx.send("Použití: !vs start <datum> <zkratka>")
+            await ctx.send("Usage: !vs start <date> <alliance tag>")
             return
-        date, tag = args
-        user_id = ctx.author.id
-        upload_session[user_id] = {"date": date, "tag": tag, "records": {}}
-        await ctx.send(f"Začínám nahrávání výsledků pro {date} ({tag}). Posílej textové výpisy...")
-    elif subcommand == "finish":
-        user_id = ctx.author.id
-        if user_id not in upload_session:
-            await ctx.send("Nezahájil jsi žádnou upload session pomocí !vs start.")
+        upload_session[ctx.author.id] = {"date": args[0], "tag": args[1], "records": {}}
+        await ctx.send(f"Started result upload for {args[0]} ({args[1]}).")
+    elif sub == "finish":
+        session = upload_session.pop(ctx.author.id, None)
+        if not session:
+            await ctx.send("No upload session started.")
             return
-        session = upload_session.pop(user_id)
-        save_to_db(session["records"], session["date"], session["tag"])
-        await ctx.send(f"Uloženo {len(session['records'])} unikátních hráčů.")
-    elif subcommand == "top":
+        df = pd.read_csv(DB_FILE)
+        new_data = [{"name": k, "points": v, "date": session["date"], "tag": session["tag"]}
+                    for k, v in session["records"].items()]
+        df = pd.concat([df, pd.DataFrame(new_data)], ignore_index=True)
+        df.to_csv(DB_FILE, index=False)
+        await ctx.send(f"Saved {len(new_data)} unique players.")
+    elif sub == "aliance":
+        df = pd.read_csv(DB_FILE)
+        tags = df["tag"].unique()
+        await ctx.send("Alliance tags: " + ", ".join(tags))
+    elif sub == "train":
+        df = pd.read_csv(DB_FILE)
+        latest = df["date"].max()
+        df_day = df[df["date"] == latest]
+        df_day = df_day[~df_day["name"].isin(r4_list)]
+        top = df_day.sort_values(by="points", ascending=False).head(1)
+        ch = bot.get_channel(INFO_CHANNEL_ID)
+        for _, row in top.iterrows():
+            await ch.send(f"🏆 TRAIN: {row['name']} – {row['points']:,} pts")
+        await ctx.send("Sent top TRAIN player to info channel.")
+    elif sub == "R4":
         if not args:
-            await ctx.send("Použití: !vs top <day|zkratka> [graf]")
+            await ctx.send("Usage: !vs R4 <alliance tag>")
             return
-        graf = "graf" in args
-        if args[0] == "day":
-            text, file = get_top_day(graf=graf)
-        else:
-            text, file = get_top_tag(args[0], graf=graf)
-        await ctx.send(text)
-        if file:
-            await ctx.send(file=file)
-    elif subcommand == "stats":
-        if not args:
-            await ctx.send("Použití: !vs stats <jméno hráče> [graf]")
-            return
-        graf = "graf" in args
-        name = " ".join(arg for arg in args if arg != "graf")
-        text, file = get_player_stats(name, graf=graf)
-        await ctx.send(text)
-        if file:
-            await ctx.send(file=file)
-    elif subcommand == "help":
-        help_text = (
-            "**Dostupné příkazy:**\n"
-            "`!vs start <datum> <zkratka>` – začni nahrávání výsledků\n"
-            "`!vs finish` – ulož záznamy\n"
-            "`!vs top day [graf]` – top hráči za poslední den\n"
-            "`!vs top <zkratka> [graf]` – top hráči se zkratkou\n"
-            "`!vs stats <jméno> [graf]` – statistika hráče\n"
-            "`!vs help` – tento přehled"
-        )
-        await ctx.send(help_text)
-    else:
-        await ctx.send("Neznámý pod-příkaz. Použij `!vs help`.")
+        tag = args[0]
+        df = pd.read_csv(DB_FILE)
+        df_tag = df[df["tag"] == tag]
+        df_tag = df_tag[~df_tag["name"].isin(r4_list)]
+        top2 = df_tag.groupby("name")["points"].sum().reset_index().sort_values(by="points", ascending=False).head(2)
+        ch = bot.get_channel(INFO_CHANNEL_ID)
+        for _, row in top2.iterrows():
+            await ch.send(f"🥇 R4: {row['name']} – {row['points']:,} pts")
+        await ctx.send("Sent top 2 R4 players to info channel.")
+
+@bot.command()
+async def R4list(ctx, *, text):
+    names = [n.strip() for n in text.split(",")]
+    save_r4_list(names)
+    await ctx.send(f"Updated R4 list: {', '.join(names)}")
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
-
-    user_id = message.author.id
-    if user_id in upload_session and not message.content.startswith("!vs"):
-        new_data = parse_text_block(message.content)
-        for name, points in new_data:
-            existing = upload_session[user_id]["records"].get(name)
-            if existing is None or points > existing:
-                upload_session[user_id]["records"][name] = points
-        await message.channel.send(f"Přidáno {len(new_data)} záznamů. (Neunikátně)")
+    uid = message.author.id
+    if uid in upload_session and not message.content.startswith("!vs"):
+        session = upload_session[uid]
+        lines = message.content.splitlines()
+        current_name = None
+        for line in lines:
+            line = line.strip()
+            if "[RoP]" in line or line.isdigit() or not line:
+                continue
+            if "," in line and current_name:
+                try:
+                    points = int("".join(filter(str.isdigit, line)))
+                    session["records"][current_name] = max(session["records"].get(current_name, 0), points)
+                    current_name = None
+                except:
+                    continue
+            else:
+                current_name = line
+        await message.channel.send("Results added.")
     await bot.process_commands(message)
+
+def scheduled_r4_run():
+    import asyncio
+    loop = asyncio.get_event_loop()
+    loop.create_task(bot.get_channel(INFO_CHANNEL_ID).send("⏰ Scheduled R4 run not yet implemented."))
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(scheduled_r4_run, 'cron', day_of_week='sun', hour=13, minute=0)
+scheduler.start()

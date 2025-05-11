@@ -1,5 +1,6 @@
 discord.py
 pandas
-requests
 matplotlib
+requests
 flask
+apscheduler
