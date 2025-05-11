@@ -19,21 +19,17 @@ def setup_vs_text_listener(bot):
         lines = content.split("\n")
         added = []
 
-        for line in lines:
-            line = line.strip()
-            if not line:
+        for i in range(len(lines) - 1):
+            name = lines[i].strip()
+            next_line = lines[i + 1].strip()
+            if not name or not next_line:
                 continue
-
-            # Vyhledáme jméno a body (např. "Mambí\n11,786,166")
-            match = re.match(r"^(?P<name>[^\d\[]\S+)\s*\n?\s*(?P<points>[\d.,]+)$", line)
-            if match:
-                name = match.group("name")
-                points = int(match.group("points").replace(",", "").replace(".", ""))
+            if re.match(r"^[\d.,]+$", next_line):
+                points = int(next_line.replace(",", "").replace(".", ""))
                 session["records"][name] = points
                 added.append(f"{name} – {points:,}")
 
         if added:
-            await message.channel.send("✅ Načteno:
-" + "\n".join(added))
+            await message.channel.send("✅ Načteno:\n" + "\n".join(added))
         else:
             await message.channel.send("⚠️ Nenačten žádný platný výsledek.")
