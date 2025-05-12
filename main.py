@@ -28,7 +28,7 @@ class MyBot(commands.Bot):
         setup_vs_text_listener(self)
 
         try:
-            print("➡️ Slash sync guild-only")
+            print("➡️ Slash sync (jen pro server)")
             await self.tree.sync(guild=discord.Object(id=GUILD_ID))
 
             print(f"✅ Slash příkazy synchronizovány s GUILD_ID {GUILD_ID}")
