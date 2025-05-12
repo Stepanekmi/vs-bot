@@ -21,6 +21,7 @@ print("🟢 Bot objekt vytvořen.")
 async def on_ready():
     print("⚡ on_ready triggered")
     try:
+        await setup_power_commands(bot)
         await bot.tree.clear_commands(guild=discord.Object(id=GUILD_ID))
         await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
         print(f"✅ Příkazy znovu synchronizovány s guildu {GUILD_ID}")
@@ -33,7 +34,6 @@ async def on_ready():
     print("------")
 
 setup_vs_commands(bot)
-setup_power_commands(bot)
 setup_vs_text_listener(bot)
 
 # Spustíme keepalive server na pozadí
