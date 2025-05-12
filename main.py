@@ -8,7 +8,7 @@ from vs_text_listener import setup_vs_text_listener
 import threading
 from keepalive import app
 
-GUILD_ID = 1231529219029340234  # Ověřená hodnota
+GUILD_ID = 1231529219029340234  # Ověřený ID tvého serveru
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
@@ -47,10 +47,6 @@ bot = MyBot(command_prefix="!", intents=intents)
 async def on_ready():
     print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
     print("------")
-
-    # Nouzové spuštění setup_hook ručně
-    print("🚨 Spouštím ručně setup_hook (nouzový režim)")
-    await bot.setup_hook()
 
 # Spuštění keepalive serveru
 threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))).start()
