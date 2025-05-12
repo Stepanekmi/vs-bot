@@ -8,7 +8,7 @@ from vs_text_listener import setup_vs_text_listener
 import threading
 from keepalive import app
 
-GUILD_ID = 1231529219029340234  # nahraď vlastním guild ID
+GUILD_ID = 1231529219029340234  # Ověřená hodnota
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
@@ -17,12 +17,23 @@ intents.message_content = True
 class MyBot(commands.Bot):
     async def setup_hook(self):
         print("⚙️ setup_hook spuštěn...")
+
+        print("➡️ setup_power_commands(bot)")
         await setup_power_commands(self)
+
+        print("➡️ setup_vs_commands(bot)")
         setup_vs_commands(self)
+
+        print("➡️ setup_vs_text_listener(bot)")
         setup_vs_text_listener(self)
+
         try:
+            print("➡️ clear_commands")
             await self.tree.clear_commands(guild=discord.Object(id=GUILD_ID))
+
+            print("➡️ sync(guild=...)")
             await self.tree.sync(guild=discord.Object(id=GUILD_ID))
+
             print(f"✅ Slash příkazy synchronizovány s guildu {GUILD_ID}")
             print("📋 Registrované slash příkazy:")
             for cmd in self.tree.get_commands(guild=discord.Object(id=GUILD_ID)):
@@ -36,6 +47,10 @@ bot = MyBot(command_prefix="!", intents=intents)
 async def on_ready():
     print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
     print("------")
+
+    # Nouzové spuštění setup_hook ručně
+    print("🚨 Spouštím ručně setup_hook (nouzový režim)")
+    await bot.setup_hook()
 
 # Spuštění keepalive serveru
 threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))).start()
