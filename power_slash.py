@@ -97,6 +97,3 @@ class PowerCommands(commands.Cog):
 async def setup_power_commands(bot):
     cog = PowerCommands(bot)
     await bot.add_cog(cog)
-    bot.tree.add_command(cog.powerenter)
-    bot.tree.add_command(cog.powerplayer)
-    bot.tree.add_command(cog.powertopplayer)
