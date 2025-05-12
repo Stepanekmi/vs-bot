@@ -28,15 +28,17 @@ class MyBot(commands.Bot):
         setup_vs_text_listener(self)
 
         try:
-            print("➡️ Slash sync (jen pro server)")
+            print("➡️ TVRDÝ SYNC (GUILD + GLOBAL)")
+            await self.tree.clear_commands(guild=discord.Object(id=GUILD_ID))
             await self.tree.sync(guild=discord.Object(id=GUILD_ID))
+            await self.tree.sync()  # globální sync pro jistotu
 
-            print(f"✅ Slash příkazy synchronizovány s GUILD_ID {GUILD_ID}")
+            print(f"✅ Slash příkazy synchronizovány pro GUILD_ID {GUILD_ID} i globálně")
             print("📋 Registrované příkazy:")
             for cmd in self.tree.get_commands(guild=discord.Object(id=GUILD_ID)):
                 print(f" - /{cmd.name}")
         except Exception as e:
-            print(f"❌ Chyba při registraci slash příkazů: {e}")
+            print(f"❌ Chyba při sync příkazů: {e}")
 
 bot = MyBot(command_prefix="!", intents=intents)
 
