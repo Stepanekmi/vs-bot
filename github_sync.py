@@ -1,4 +1,6 @@
-import os, base64, requests
+import os
+import base64
+import requests
 
 GITHUB_REPO = "Stepanekmi/vs-data-store"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")

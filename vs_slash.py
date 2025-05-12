@@ -7,11 +7,11 @@ from github_sync import save_to_github
 DB_FILE = "vs_data.csv"
 R4_FILE = "r4_list.txt"
 
-# Init CSV
+# Initialize CSV if missing
 try:
     pd.read_csv(DB_FILE)
 except FileNotFoundError:
-    pd.DataFrame(columns=["name","points","date","tag"]).to_csv(DB_FILE, index=False)
+    pd.DataFrame(columns=["name","points","date","tag"]).to_csv(DB_FILE,index=False)
 
 class VSCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -29,10 +29,8 @@ class VSCommands(commands.Cog):
         if not sess:
             return await interaction.response.send_message("No upload session started.")
         df = pd.read_csv(DB_FILE)
-        data = [
-            {"name": n, "points": p, "date": sess["date"], "tag": sess["tag"]}
-            for n,p in sess["records"].items()
-        ]
+        data = [{"name": n, "points": p, "date": sess["date"], "tag": sess["tag"]} 
+                for n,p in sess["records"].items()]
         df = pd.concat([df, pd.DataFrame(data)], ignore_index=True)
         df.to_csv(DB_FILE, index=False)
         save_to_github(DB_FILE, f"data/{DB_FILE}", "Update VS data")
@@ -45,4 +43,5 @@ class VSCommands(commands.Cog):
         tags = df["tag"].unique()
         await interaction.response.send_message("Alliance tags: " + ", ".join(tags))
 
-    # (Další vs_* příkazy – vs_stats, vs_top_day, vs_top, vs_train, vs_r4, info – vlož stejně jako výše)
+async def setup_vs_commands(bot: commands.Bot):
+    await bot.add_cog(VSCommands(bot))

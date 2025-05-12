@@ -7,6 +7,8 @@ from vs_text_listener import setup_vs_text_listener
 import threading
 from keepalive import app
 
+# Discord IDs
+APPLICATION_ID = 1371568333333332118
 GUILD_ID = 1231529219029340234
 TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -14,36 +16,30 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 class MyBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents, application_id=APPLICATION_ID)
+
     async def setup_hook(self):
         print("⚙️ setup_hook spuštěn...")
-        # Power commands
-        print("➡️ Registrace power příkazů")
+        # Register commands
         await setup_power_commands(self)
-        # VS commands
-        print("➡️ Registrace VS příkazů")
-        setup_vs_commands(self)
-        # Text listener
-        print("➡️ Registrace text listeneru")
+        await setup_vs_commands(self)
         setup_vs_text_listener(self)
-        # Sync
-        try:
-            print("➡️ Slash sync (guild)")
-            await self.tree.clear_commands(guild=discord.Object(id=GUILD_ID))
-            await self.tree.sync(guild=discord.Object(id=GUILD_ID))
-            print(f"✅ Slash příkazy synchronizovány pro GUILD {GUILD_ID}")
-            for cmd in self.tree.get_commands(guild=discord.Object(id=GUILD_ID)):
-                print(f" - /{cmd.name}")
-        except Exception as e:
-            print(f"❌ Sync slash: {e}")
+        # Sync slash commands to guild
+        await self.tree.sync(guild=discord.Object(id=GUILD_ID))
+        print(f"✅ Slash commands synced for GUILD_ID {GUILD_ID}")
 
-bot = MyBot(command_prefix="!", intents=intents)
+bot = MyBot()
 
 @bot.event
 async def on_ready():
-    print(f"🔓 Přihlášen jako {bot.user} (ID: {bot.user.id})")
+    print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
+    print("------")
 
-# Keepalive
-threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))).start()
+# Keepalive server
+threading.Thread(
+    target=lambda: app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
+).start()
 
-print("🔑 Spouštím bota...")
+print("🔑 Starting bot...")
 bot.run(TOKEN)
