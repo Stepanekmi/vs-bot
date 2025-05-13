@@ -20,26 +20,23 @@ intents.message_content = True
 
 class MyBot(commands.Bot):
     def __init__(self):
-        super().__init__(
-            command_prefix="!",
-            intents=intents,
-            application_id=APPLICATION_ID
-        )
+        super().__init__(command_prefix="!", intents=intents, application_id=APPLICATION_ID)
+        self.synced = False
 
-    async def setup_hook(self):
-        print("⚙️ setup_hook spuštěn…")
-        await setup_power_commands(self)
-        await setup_vs_commands(self)
-        setup_vs_text_listener(self)
-        await self.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"✅ Slash commands synced for GUILD_ID {GUILD_ID}")
+    async def on_ready(self):
+        print(f"🔓 Logged in as {self.user} (ID: {self.user.id})")
+        if not self.synced:
+            print("⚙️ Registering commands in on_ready...")
+            await setup_power_commands(self)
+            await setup_vs_commands(self)
+            setup_vs_text_listener(self)
+            await self.tree.sync(guild=discord.Object(id=GUILD_ID))
+            print(f"✅ Slash commands synced for GUILD_ID {GUILD_ID}")
+            for cmd in self.tree.get_commands(guild=discord.Object(id=GUILD_ID)):
+                print(f" - /{cmd.name}")
+            self.synced = True
 
 bot = MyBot()
-
-@bot.event
-async def on_ready():
-    print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
-    print("------")
 
 # Keepalive server for UptimeRobot
 threading.Thread(
