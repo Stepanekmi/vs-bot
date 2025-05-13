@@ -4,12 +4,12 @@ from discord import app_commands
 from discord.ext import commands
 from github_sync import save_to_github
 
-DB_FILE      = "vs_data.csv"
-R4_LIST_FILE = "r4_list.txt"
-
 # ID serveru
 GUILD_ID = 1231529219029340234
 GUILD = discord.Object(id=GUILD_ID)
+
+DB_FILE     = "vs_data.csv"
+R4_LIST_FILE= "r4_list.txt"
 
 # Inicializace CSV
 try:
@@ -33,7 +33,7 @@ class VSCommands(commands.Cog):
     async def vs_finish(self, interaction: discord.Interaction):
         sess = getattr(self.bot, "upload_session", None)
         if not sess:
-            return await interaction.response.send_message("No upload session started.")
+            return await interaction.response.send_message("No session.")
         df = pd.read_csv(DB_FILE)
         data = [{"name": n, "points": p, "date": sess["date"], "tag": sess["tag"]}
                 for n,p in sess["records"].items()]
@@ -50,8 +50,8 @@ class VSCommands(commands.Cog):
         tags = df["tag"].unique()
         await interaction.response.send_message("Alliance tags: " + ", ".join(tags))
 
-    # Zde přidej analogicky vs_stats, vs_top_day, vs_top, vs_train, vs_r4, info
-    # a každému z nich dej @app_commands.guilds(GUILD)
+    # Ikdyž je zde ukázka jen tří, stejně doplň vs_stats, vs_top_day, vs_top, vs_train, vs_r4, info
+    # a každý z nich označ @app_commands.guilds(GUILD)
 
 async def setup_vs_commands(bot: commands.Bot):
     await bot.add_cog(VSCommands(bot))

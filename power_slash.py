@@ -7,6 +7,10 @@ import io
 from datetime import datetime
 from github_sync import save_to_github
 
+# ID serveru
+GUILD_ID = 1231529219029340234
+GUILD = discord.Object(id=GUILD_ID)
+
 POWER_FILE = "power_data.csv"
 
 # Initialize CSV if missing
@@ -26,6 +30,7 @@ class PowerCommands(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="powerenter", description="Zadej sílu týmů hráče")
+    @app_commands.guilds(GUILD)
     @app_commands.describe(player="Jméno hráče", tank="Síla tankového týmu",
                             rocket="Síla raketového týmu", air="Síla leteckého týmu")
     async def powerenter(self, interaction: discord.Interaction,
@@ -47,6 +52,7 @@ class PowerCommands(commands.Cog):
         )
 
     @app_commands.command(name="powerplayer", description="Graf síly hráče v čase")
+    @app_commands.guilds(GUILD)
     @app_commands.describe(player="Jméno hráče")
     async def powerplayer(self, interaction: discord.Interaction, player: str):
         await interaction.response.defer(thinking=True)
@@ -66,6 +72,7 @@ class PowerCommands(commands.Cog):
         plt.close()
 
     @app_commands.command(name="powertopplayer", description="Top hráči podle síly")
+    @app_commands.guilds(GUILD)
     async def powertopplayer(self, interaction: discord.Interaction):
         df = pd.read_csv(POWER_FILE)
         df["timestamp"] = pd.to_datetime(df["timestamp"])
