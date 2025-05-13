@@ -1,11 +1,11 @@
+import pandas as pd
 import discord
 from discord import app_commands
 from discord.ext import commands
-import pandas as pd
 from github_sync import save_to_github
 
-DB_FILE = "vs_data.csv"
-R4_FILE = "r4_list.txt"
+DB_FILE     = "vs_data.csv"
+R4_LIST_FILE= "r4_list.txt"
 
 # Initialize CSV if missing
 try:
@@ -21,7 +21,7 @@ class VSCommands(commands.Cog):
     @app_commands.describe(date="Date of the match (e.g., 10.5.25)", tag="Alliance tag")
     async def vs_start(self, interaction: discord.Interaction, date: str, tag: str):
         self.bot.upload_session = {"date": date, "tag": tag, "records": {}}
-        await interaction.response.send_message(f"Started upload for {date} ({tag}).")
+        await interaction.response.send_message(f"Upload started: {date} ({tag}).")
 
     @app_commands.command(name="vs_finish", description="Finish and save uploaded results")
     async def vs_finish(self, interaction: discord.Interaction):
@@ -29,7 +29,7 @@ class VSCommands(commands.Cog):
         if not sess:
             return await interaction.response.send_message("No upload session started.")
         df = pd.read_csv(DB_FILE)
-        data = [{"name": n, "points": p, "date": sess["date"], "tag": sess["tag"]} 
+        data = [{"name": n, "points": p, "date": sess["date"], "tag": sess["tag"]}
                 for n,p in sess["records"].items()]
         df = pd.concat([df, pd.DataFrame(data)], ignore_index=True)
         df.to_csv(DB_FILE, index=False)

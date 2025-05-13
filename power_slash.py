@@ -1,9 +1,7 @@
+import pandas as pd
 import discord
 from discord import app_commands
 from discord.ext import commands
-import pandas as pd
-import matplotlib.pyplot as plt
-import io
 from datetime import datetime
 from github_sync import save_to_github
 
@@ -15,7 +13,7 @@ try:
 except FileNotFoundError:
     pd.DataFrame(columns=["player","tank","rocket","air","timestamp"]).to_csv(POWER_FILE,index=False)
 
-def normalize(v):
+def normalize(v: str) -> float:
     try:
         return round(float(v.replace(",", ".")), 2)
     except:
@@ -26,8 +24,10 @@ class PowerCommands(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="powerenter", description="Zadej sílu týmů hráče")
-    @app_commands.describe(player="Jméno hráče", tank="Síla tankového týmu", rocket="Síla raketového týmu", air="Síla leteckého týmu")
-    async def powerenter(self, interaction: discord.Interaction, player: str, tank: str, rocket: str, air: str):
+    @app_commands.describe(player="Jméno hráče", tank="Síla tankového týmu",
+                            rocket="Síla raketového týmu", air="Síla leteckého týmu")
+    async def powerenter(self, interaction: discord.Interaction,
+                         player: str, tank: str, rocket: str, air: str):
         df = pd.read_csv(POWER_FILE)
         new = {
             "player": player,
@@ -41,7 +41,7 @@ class PowerCommands(commands.Cog):
         save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Power data for {player}")
         await interaction.response.send_message(
             f"✅ Uloženo pro **{player}**:\n"
-            f"Tank: {new['tank']}M, Rocket: {new['rocket']}M, Air: {new['air']}M"
+            f"Tank: {new['tank']}M\nRocket: {new['rocket']}M\nAir: {new['air']}M"
         )
 
     @app_commands.command(name="powerplayer", description="Graf síly hráče v čase")
@@ -53,13 +53,14 @@ class PowerCommands(commands.Cog):
             return await interaction.response.send_message("⚠️ Hráč nenalezen.")
         df_p["timestamp"] = pd.to_datetime(df_p.timestamp)
         df_p = df_p.sort_values("timestamp")
+        import matplotlib.pyplot as plt, io
         plt.figure(figsize=(8,4))
-        plt.plot(df_p.timestamp, df_p.tank, 'o-', label='Tank')
-        plt.plot(df_p.timestamp, df_p.rocket, 'o-', label='Rocket')
-        plt.plot(df_p.timestamp, df_p.air, 'o-', label='Air')
-        plt.legend(); plt.xlabel('Čas'); plt.ylabel('Síla (M)'); plt.tight_layout()
-        buf = io.BytesIO(); plt.savefig(buf, format='png'); buf.seek(0)
-        await interaction.response.send_message(file=discord.File(buf, 'power_graph.png'))
+        plt.plot(df_p.timestamp, df_p.tank,   "o-", label="Tank")
+        plt.plot(df_p.timestamp, df_p.rocket, "o-", label="Rocket")
+        plt.plot(df_p.timestamp, df_p.air,    "o-", label="Air")
+        plt.legend(); plt.xlabel("Čas"); plt.ylabel("Síla (M)")
+        buf = io.BytesIO(); plt.savefig(buf, format="png"); buf.seek(0)
+        await interaction.response.send_message(file=discord.File(buf, "power_graph.png"))
         plt.close()
 
     @app_commands.command(name="powertopplayer", description="Top hráči podle síly")

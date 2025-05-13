@@ -1,5 +1,8 @@
 import os
+print("👀 RUNNING UPDATED MAIN.PY")
 import discord
+print("🔍 discord.py version:", discord.__version__)
+
 from discord.ext import commands
 from power_slash import setup_power_commands
 from vs_slash import setup_vs_commands
@@ -11,9 +14,6 @@ from keepalive import app
 APPLICATION_ID = 1371568333333332118
 GUILD_ID       = 1231529219029340234
 TOKEN          = os.getenv("DISCORD_TOKEN")
-
-# Debug na ověření, že se načetl správný soubor
-print("👀 RUNNING UPDATED MAIN.PY")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -28,11 +28,9 @@ class MyBot(commands.Bot):
 
     async def setup_hook(self):
         print("⚙️ setup_hook spuštěn…")
-        # Registrace Cogů
         await setup_power_commands(self)
         await setup_vs_commands(self)
         setup_vs_text_listener(self)
-        # Synchronizace slash příkazů jen pro tento guild
         await self.tree.sync(guild=discord.Object(id=GUILD_ID))
         print(f"✅ Slash commands synced for GUILD_ID {GUILD_ID}")
 
@@ -43,7 +41,7 @@ async def on_ready():
     print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
     print("------")
 
-# Keepalive server pro UptimeRobot
+# Keepalive server for UptimeRobot
 threading.Thread(
     target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
 ).start()

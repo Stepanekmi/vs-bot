@@ -13,7 +13,7 @@ def setup_vs_text_listener(bot: commands.Bot):
         clean_lines = []
         for line in lines:
             l = line.strip()
-            if not l or l.lower() in ["points","friday saturday"]:
+            if not l or l.lower() in ["points", "friday saturday"]:
                 continue
             if re.fullmatch(r"\d+", l):
                 continue
@@ -27,7 +27,7 @@ def setup_vs_text_listener(bot: commands.Bot):
             next_line = clean_lines[i+1].strip()
             if re.match(r"^[\d,\.]+$", next_line):
                 try:
-                    points = int(next_line.replace(",","").replace(".",""))
+                    points = int(next_line.replace(",", "").replace(".", ""))
                     session["records"][name] = points
                     added.append(f"{name} – {points:,}")
                     i += 2
