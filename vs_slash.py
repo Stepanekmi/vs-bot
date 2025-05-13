@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import io
 from github_sync import save_to_github
 
-# ID serveru
+# ID of your server
 GUILD_ID = 1231529219029340234
 GUILD = discord.Object(id=GUILD_ID)
 
@@ -157,6 +157,17 @@ class VSCommands(commands.Cog):
             await ch.send(f"🥇 R4: {row['name']} – {row['points']:,} pts")
         await interaction.response.send_message("✅ Sent top 2 R4 players to info channel.")
 
+    @app_commands.command(name="r4list", description="Set ignored R4 player names")
+    @app_commands.guilds(GUILD)
+    @app_commands.describe(players="Comma-separated player names")
+    async def r4list(self, interaction: discord.Interaction, players: str):
+        names = [n.strip() for n in players.split(",") if n.strip()]
+        with open(R4_LIST_FILE, "w") as f:
+            for name in names:
+                f.write(name + "\n")
+        save_to_github(R4_LIST_FILE, f"data/{R4_LIST_FILE}", "Update R4 list")
+        await interaction.response.send_message(f"✅ R4 list updated: {', '.join(names)}")
+
     @app_commands.command(name="info", description="Show all bot commands")
     @app_commands.guilds(GUILD)
     async def info(self, interaction: discord.Interaction):
@@ -170,9 +181,10 @@ class VSCommands(commands.Cog):
             "/vs_top <tag> [graph] – top by tag\n"
             "/vs_train – send top to TRAIN channel\n"
             "/vs_r4 <tag> – send top 2 to R4 channel\n"
+            "/r4list <players> – set ignored R4 list\n"
             "/powerenter <player> <tank> <rocket> <air> – enter power data\n"
             "/powerplayer <player> – chart power over time\n"
-            "/powertopplayer – top power players"
+            "/powertopplayer – show all power rankings"
         )
         await interaction.response.send_message(help_text)
 
