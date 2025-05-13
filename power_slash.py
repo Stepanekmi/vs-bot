@@ -67,6 +67,7 @@ class PowerCommands(commands.Cog):
         if df_p.empty:
             return await interaction.followup.send("⚠️ Player not found.")
 
+        df_p = df_p.copy()
         df_p["timestamp"] = pd.to_datetime(df_p["timestamp"])
         df_p = df_p.sort_values("timestamp")
 
@@ -91,14 +92,19 @@ class PowerCommands(commands.Cog):
         df_last["max_team"] = df_last[["tank","rocket","air"]].max(axis=1)
         df_last["total"]    = df_last[["tank","rocket","air"]].sum(axis=1)
 
-        top1 = df_last.nlargest(10, "max_team")
-        top2 = df_last.nlargest(10, "total")
+        # Sort all players by single-team and total power
+        sorted_by_max = df_last.sort_values("max_team", ascending=False)
+        sorted_by_total = df_last.sort_values("total", ascending=False)
 
-        msg = "**🥇 Top single-team**\n" + "\n".join(
-            f"{i+1}. {r['player']} – {r['max_team']}M" for i, r in top1.iterrows()
+        msg = "**🥇 All players by single-team strength**\n"
+        msg += "\n".join(
+            f"{i+1}. {row['player']} – {row['max_team']}M" 
+            for i, row in sorted_by_max.iterrows()
         )
-        msg += "\n\n**🏆 Top overall**\n" + "\n".join(
-            f"{i+1}. {r['player']} – {r['total']}M" for i, r in top2.iterrows()
+        msg += "\n\n**🏆 All players by total strength**\n"
+        msg += "\n".join(
+            f"{i+1}. {row['player']} – {row['total']}M" 
+            for i, row in sorted_by_total.iterrows()
         )
         await interaction.response.send_message(msg)
 
