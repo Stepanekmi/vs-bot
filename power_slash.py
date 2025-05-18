@@ -14,9 +14,9 @@ GUILD = discord.Object(id=GUILD_ID)
 # Soubor s daty
 POWER_FILE = "power_data.csv"
 
-def normalize(val: str) -> int:
-    # Převod string '12M' na int 12 nebo '150' na int 150
-    return int(val.strip().upper().rstrip("M"))
+def normalize(val: str) -> float:
+    # Převod stringu '12M' na float 12.0 nebo '33.75M' na 33.75
+    return float(val.strip().upper().rstrip("M"))
 
 class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -231,7 +231,19 @@ class PowerCommands(commands.Cog):
         buf = io.BytesIO()
         plt.savefig(buf, format="png")
         buf.seek(0)
-        await interaction.response.send_message(file=discord.File(buf, "power.png"))
+        # Calculate percentage improvements
+        improvements = []
+        for col in ["tank", "rocket", "air"]:
+            values = df_p[col].tolist()
+            pct_changes = [((values[i] - values[i-1]) / values[i-1] * 100) for i in range(1, len(values))]
+            overall = (values[-1] - values[0]) / values[0] * 100
+            improvements.append(
+                f"{col.capitalize()}: " + ", ".join(f"{p:.2f}%" for p in pct_changes) + f"; Total: {overall:.2f}%"
+            )
+        improv_text = "💹 Improvements:
+" + "
+".join(improvements)
+        await interaction.response.send_message(content=improv_text, file=discord.File(buf, "power.png"))
 async def setup_power_commands(bot: commands.Bot):
     # Přidá PowerCommands Cog do bota.
     await bot.add_cog(PowerCommands(bot))
