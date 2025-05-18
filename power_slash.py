@@ -51,17 +51,13 @@ class PowerCommands(commands.Cog):
         df.to_csv(POWER_FILE, index=False)
         save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Power data for {player}")
         msg = (
-            f"✅ Data saved for **{player}**:
-"
-            f"Tank: {new['tank']}M
-"
-            f"Rocket: {new['rocket']}M
-"
+            f"✅ Data saved for **{player}**:\n"
+            f"Tank: {new['tank']}M\n"
+            f"Rocket: {new['rocket']}M\n"
             f"Air: {new['air']}M"
         )
         if team4:
-            msg += f"
-Team4: {new['team4']}M"
+            msg += f"\nTeam4: {new['team4']}M"
         await interaction.response.send_message(msg, ephemeral=True)
 
     @app_commands.command(name="powertopplayer", description="Show top players by single-team and total strength (3 teams)")
@@ -80,14 +76,8 @@ Team4: {new['team4']}M"
             f"{rank}. {row['player']} – {row['total']}M"
             for rank, (_, row) in enumerate(df_last.sort_values("total", ascending=False).iterrows(), start=1)
         ]
-        msg = "**🥇 All players by single-team strength**
-" + "
-".join(lines_max)
-        msg += "
-
-**🏆 All players by total strength**
-" + "
-".join(lines_tot)
+        msg = "**🥇 All players by single-team strength**\n" + "\n".join(lines_max)
+        msg += "\n\n**🏆 All players by total strength**\n" + "\n".join(lines_tot)
         await interaction.response.send_message(msg, ephemeral=True)
 
     @app_commands.command(name="powertopplayer4", description="Show top players including optional 4th team")
@@ -109,14 +99,8 @@ Team4: {new['team4']}M"
             f"{rank}. {row['player']} – {row['total']}M"
             for rank, (_, row) in enumerate(df_last.sort_values("total", ascending=False).iterrows(), start=1)
         ]
-        msg = "**🥇 All players by single-team strength (including team4)**
-" + "
-".join(lines_max)
-        msg += "
-
-**🏆 All players by total strength (including team4)**
-" + "
-".join(lines_tot)
+        msg = "**🥇 All players by single-team strength (including team4)**\n" + "\n".join(lines_max)
+        msg += "\n\n**🏆 All players by total strength (including team4)**\n" + "\n".join(lines_tot)
         await interaction.response.send_message(msg, ephemeral=True)
 
     @app_commands.command(name="powererase", description="Erase all records for a given player")
@@ -150,13 +134,8 @@ Team4: {new['team4']}M"
                 if hasattr(row, col) and not pd.isna(getattr(row, col)):
                     parts.append(f"{col.capitalize()}: {int(getattr(row, col))}M")
             lines.append(f"{i}. " + ", ".join(parts))
-        msg = f"📋 **Records for {player}** (oldest→newest):
-" + "
-".join(lines)
-        msg += "
-
-Do you want to delete any entry?
-`yes` to keep all, or `no` to delete one."
+        msg = f"📋 **Records for {player}** (oldest→newest):\n" + "\n".join(lines)
+        msg += "\n\nDo you want to delete any entry?\n`yes` to keep all, or `no` to delete one."
         await interaction.response.send_message(msg, ephemeral=True)
 
         def check(m: discord.Message):
@@ -178,9 +157,7 @@ Do you want to delete any entry?
             return
 
         entry = lines[idx - 1]
-        await interaction.followup.send(f"⚠️ Are you sure you want to delete entry {idx}?
-`{entry}`
-Reply `yes` to confirm or `no` to cancel.", ephemeral=True)
+        await interaction.followup.send(f"⚠️ Are you sure you want to delete entry {idx}?\n`{entry}`\nReply `yes` to confirm or `no` to cancel.", ephemeral=True)
         reply3 = await self.bot.wait_for("message", check=check, timeout=60)
         if reply3.content.lower() in ("yes", "y", "true"):
             to_drop = df_p.index[idx - 1]
