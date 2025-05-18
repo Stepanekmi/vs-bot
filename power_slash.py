@@ -52,12 +52,12 @@ class PowerCommands(commands.Cog):
         save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Power data for {player}")
         msg = (
             f"✅ Data saved for **{player}**:\n"
-            f"Tank: {new['tank']}M\n"
-            f"Rocket: {new['rocket']}M\n"
-            f"Air: {new['air']}M"
+            f"Tank: {new['tank']:.2f}M\n"
+            f"Rocket: {new['rocket']:.2f}M\n"
+            f"Air: {new['air']:.2f}M"
         )
         if team4:
-            msg += f"\nTeam4: {new['team4']}M"
+            msg += f"\nTeam4: {new['team4']:.2f}M"
         await interaction.response.send_message(msg, ephemeral=True)
 
     @app_commands.command(name="powertopplayer", description="Show top players by single-team and total strength (3 teams)")
@@ -69,11 +69,11 @@ class PowerCommands(commands.Cog):
         df_last["max_team"] = df_last[["tank", "rocket", "air"]].max(axis=1)
         df_last["total"] = df_last[["tank", "rocket", "air"]].sum(axis=1)
         lines_max = [
-            f"{rank}. {row['player']} – {row['max_team']}M"
+            f"{rank}. {row['player']} – {row['max_team']:.2f}M"
             for rank, (_, row) in enumerate(df_last.sort_values("max_team", ascending=False).iterrows(), start=1)
         ]
         lines_tot = [
-            f"{rank}. {row['player']} – {row['total']}M"
+            f"{rank}. {row['player']} – {row['total']:.2f}M"
             for rank, (_, row) in enumerate(df_last.sort_values("total", ascending=False).iterrows(), start=1)
         ]
         msg = "**🥇 All players by single-team strength**\n" + "\n".join(lines_max)
@@ -92,11 +92,11 @@ class PowerCommands(commands.Cog):
         df_last["max_team"] = df_last[team_cols].max(axis=1)
         df_last["total"] = df_last[team_cols].sum(axis=1)
         lines_max = [
-            f"{rank}. {row['player']} – {row['max_team']}M"
+            f"{rank}. {row['player']} – {row['max_team']:.2f}M"
             for rank, (_, row) in enumerate(df_last.sort_values("max_team", ascending=False).iterrows(), start=1)
         ]
         lines_tot = [
-            f"{rank}. {row['player']} – {row['total']}M"
+            f"{rank}. {row['player']} – {row['total']:.2f}M"
             for rank, (_, row) in enumerate(df_last.sort_values("total", ascending=False).iterrows(), start=1)
         ]
         msg = "**🥇 All players by single-team strength (including team4)**\n" + "\n".join(lines_max)
@@ -125,27 +125,23 @@ class PowerCommands(commands.Cog):
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
         if df_p.empty:
-            await interaction.response.send_message(f"No records found for **{player}**.", ephemeral=True)
-            return
+            return await interaction.response.send_message(f"No records found for **{player}**.", ephemeral=True)
         lines = []
         for i, row in enumerate(df_p.itertuples(), start=1):
             parts = [f"{row.timestamp.date()}"]
             for col in ["tank", "rocket", "air", "team4"]:
                 if hasattr(row, col) and not pd.isna(getattr(row, col)):
-                    parts.append(f"{col.capitalize()}: {int(getattr(row, col))}M")
+                    parts.append(f"{col.capitalize()}: {int(getattr(row, col)) if getattr(row,col).is_integer() else getattr(row,col):.2f}M")
             lines.append(f"{i}. " + ", ".join(parts))
         msg = f"📋 **Records for {player}** (oldest→newest):\n" + "\n".join(lines)
         msg += "\n\nDo you want to delete any entry?\n`yes` to keep all, or `no` to delete one."
         await interaction.response.send_message(msg, ephemeral=True)
-
         def check(m: discord.Message):
             return m.author == interaction.user and m.channel == interaction.channel
-
         reply = await self.bot.wait_for("message", check=check, timeout=60)
         if reply.content.lower() in ("yes", "y", "true"):
             await interaction.followup.send("✅ No entries were deleted.", ephemeral=True)
             return
-
         await interaction.followup.send("🔢 Please type the number of the entry to delete:", ephemeral=True)
         reply2 = await self.bot.wait_for("message", check=check, timeout=60)
         try:
@@ -153,9 +149,7 @@ class PowerCommands(commands.Cog):
             if not 1 <= idx <= len(lines):
                 raise ValueError
         except ValueError:
-            await interaction.followup.send("❌ Invalid number. Operation cancelled.", ephemeral=True)
-            return
-
+            return await interaction.followup.send("❌ Invalid number. Operation cancelled.", ephemeral=True)
         entry = lines[idx - 1]
         await interaction.followup.send(f"⚠️ Are you sure you want to delete entry {idx}?\n`{entry}`\nReply `yes` to confirm or `no` to cancel.", ephemeral=True)
         reply3 = await self.bot.wait_for("message", check=check, timeout=60)
@@ -168,42 +162,6 @@ class PowerCommands(commands.Cog):
         else:
             await interaction.followup.send("❌ Deletion cancelled.", ephemeral=True)
 
-    @app_commands.command(name="powerplayervsplayer", description="Compare two players by selected team strength")
-    @app_commands.guilds(GUILD)
-    @app_commands.describe(
-        player1="First player name",
-        player2="Second player name",
-        team="Which team to compare"
-    )
-    @app_commands.choices(team=[
-        app_commands.Choice(name="Tank", value="tank"),
-        app_commands.Choice(name="Rocket", value="rocket"),
-        app_commands.Choice(name="Air", value="air"),
-        app_commands.Choice(name="Team4", value="team4"),
-    ])
-    async def powerplayervsplayer(self, interaction: discord.Interaction,
-                                 player1: str, player2: str, team: app_commands.Choice[str]):
-        df = pd.read_csv(POWER_FILE)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df1 = df[df["player"].str.lower() == player1.lower()].sort_values("timestamp")
-        df2 = df[df["player"].str.lower() == player2.lower()].sort_values("timestamp")
-        if team.value not in df1.columns:
-            df1[team.value] = 0
-        if team.value not in df2.columns:
-            df2[team.value] = 0
-        plt.figure(figsize=(8, 4))
-        plt.plot(df1["timestamp"], df1[team.value], marker="o", linestyle="-", label=player1)
-        plt.plot(df2["timestamp"], df2[team.value], marker="o", linestyle=":", label=player2)
-        plt.xlabel("Date")
-        plt.ylabel(f"{team.name} Strength (M)")
-        plt.legend()
-        plt.tight_layout()
-        buf = io.BytesIO()
-        plt.savefig(buf, format="png")
-        buf.seek(0)
-        await interaction.response.send_message(file=discord.File(buf, "comparison.png"))
-
-
     @app_commands.command(name="powerplayer", description="Show a player's team strengths over time")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Player name to plot")
@@ -213,37 +171,35 @@ class PowerCommands(commands.Cog):
         df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
         if df_p.empty:
             return await interaction.response.send_message(f"No records found for **{player}**.", ephemeral=True)
+        # Plot
         plt.figure(figsize=(8, 4))
         plt.plot(df_p["timestamp"], df_p["tank"], marker="o", label="Tank")
         plt.plot(df_p["timestamp"], df_p["rocket"], marker="o", label="Rocket")
         plt.plot(df_p["timestamp"], df_p["air"], marker="o", label="Air")
-        # Annotate points with values
-        for x, y in zip(df_p["timestamp"], df_p["tank"]):
-            plt.text(x, y, f"{y}", fontsize=7, ha="center", va="bottom")
-        for x, y in zip(df_p["timestamp"], df_p["rocket"]):
-            plt.text(x, y, f"{y}", fontsize=7, ha="center", va="bottom")
-        for x, y in zip(df_p["timestamp"], df_p["air"]):
-            plt.text(x, y, f"{y}", fontsize=7, ha="center", va="bottom")
+        # Annotate points
+        for col in ["tank", "rocket", "air"]:
+            for x, y in zip(df_p["timestamp"], df_p[col]):
+                plt.text(x, y, f"{y:.2f}", fontsize=7, ha="center", va="bottom")
         plt.legend()
         plt.xlabel("Date")
         plt.ylabel("Strength (M)")
         plt.tight_layout()
-        buf = io.BytesIO()
-        plt.savefig(buf, format="png")
-        buf.seek(0)
-        # Calculate percentage improvements
+        # Calculate improvements
         improvements = []
         for col in ["tank", "rocket", "air"]:
             values = df_p[col].tolist()
             pct_changes = [((values[i] - values[i-1]) / values[i-1] * 100) for i in range(1, len(values))]
-            overall = (values[-1] - values[0]) / values[0] * 100
+            overall = ((values[-1] - values[0]) / values[0] * 100) if values[0] != 0 else 0
             improvements.append(
                 f"{col.capitalize()}: " + ", ".join(f"{p:.2f}%" for p in pct_changes) + f"; Total: {overall:.2f}%"
             )
-        improv_text = "💹 Improvements:
-" + "
-".join(improvements)
+        improv_text = "💹 Improvements:\n" + "\n".join(improvements)
+        # Send image with text
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
         await interaction.response.send_message(content=improv_text, file=discord.File(buf, "power.png"))
+
 async def setup_power_commands(bot: commands.Bot):
     # Přidá PowerCommands Cog do bota.
     await bot.add_cog(PowerCommands(bot))
