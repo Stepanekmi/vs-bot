@@ -71,9 +71,7 @@ class VSCommands(commands.Cog):
             return await interaction.response.send_message(f"No stats found for **{player}**.")
         stats = df_p.groupby("date")["points"].sum().reset_index().sort_values("date")
         lines = [f"{row['date']}: {row['points']:,}" for _, row in stats.iterrows()]
-        msg = f"📊 Stats for **{player}**:
-" + "
-".join(lines)
+        msg = "📊 Stats for **{}**:\n".format(player) + "\n".join(lines)
         if graph:
             await interaction.response.defer(thinking=True)
             fig, ax = plt.subplots()
@@ -95,10 +93,7 @@ class VSCommands(commands.Cog):
         latest = df["date"].max()
         df_day = df[df["date"] == latest]
         top = df_day.groupby("name")["points"].sum().reset_index().sort_values(by="points", ascending=False).head(10)
-        lines = [
-            f"{rank}. {row['name']} – {row['points']:,}"
-            for rank, (_, row) in enumerate(top.iterrows(), start=1)
-        ]
+        lines = [f"{rank}. {row['name']} – {row['points']:,}" for rank, (_, row) in enumerate(top.iterrows(), start=1)]
         msg = f"🏆 Top players for {latest}\n" + "\n".join(lines)
         if graph:
             await interaction.response.defer(thinking=True)
@@ -119,10 +114,7 @@ class VSCommands(commands.Cog):
         df = pd.read_csv(DB_FILE)
         df_tag = df[df["tag"] == tag]
         top = df_tag.groupby("name")["points"].sum().reset_index().sort_values(by="points", ascending=False).head(10)
-        lines = [
-            f"{rank}. {row['name']} – {row['points']:,}"
-            for rank, (_, row) in enumerate(top.iterrows(), start=1)
-        ]
+        lines = [f"{rank}. {row['name']} – {row['points']:,}" for rank, (_, row) in enumerate(top.iterrows(), start=1)]
         msg = f"🏅 Top players for {tag}\n" + "\n".join(lines)
         if graph:
             await interaction.response.defer(thinking=True)
@@ -163,17 +155,6 @@ class VSCommands(commands.Cog):
         for _, row in top2.iterrows():
             await ch.send(f"🥇 R4: {row['name']} – {row['points']:,} pts")
         await interaction.response.send_message("✅ Sent top 2 R4 players to info channel.")
-
-    @app_commands.command(name="r4list", description="Set ignored R4 player names")
-    @app_commands.guilds(GUILD)
-    @app_commands.describe(players="Comma-separated player names")
-    async def r4list(self, interaction: discord.Interaction, players: str):
-        names = [n.strip() for n in players.split(",") if n.strip()]
-        with open(R4_LIST_FILE, "w") as f:
-            for name in names:
-                f.write(name + "\n")
-        save_to_github(R4_LIST_FILE, f"data/{R4_LIST_FILE}", "Update R4 list")
-        await interaction.response.send_message(f"✅ R4 list updated: {', '.join(names)}")
 
     @app_commands.command(name="vs_remove", description="Remove all VS entries on given date")
     @app_commands.guilds(GUILD)
