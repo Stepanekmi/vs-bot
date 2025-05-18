@@ -203,6 +203,35 @@ class PowerCommands(commands.Cog):
         buf.seek(0)
         await interaction.response.send_message(file=discord.File(buf, "comparison.png"))
 
+
+    @app_commands.command(name="powerplayer", description="Show a player's team strengths over time")
+    @app_commands.guilds(GUILD)
+    @app_commands.describe(player="Player name to plot")
+    async def powerplayer(self, interaction: discord.Interaction, player: str):
+        df = pd.read_csv(POWER_FILE)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
+        if df_p.empty:
+            return await interaction.response.send_message(f"No records found for **{player}**.", ephemeral=True)
+        plt.figure(figsize=(8, 4))
+        plt.plot(df_p["timestamp"], df_p["tank"], marker="o", label="Tank")
+        plt.plot(df_p["timestamp"], df_p["rocket"], marker="o", label="Rocket")
+        plt.plot(df_p["timestamp"], df_p["air"], marker="o", label="Air")
+        # Annotate points with values
+        for x, y in zip(df_p["timestamp"], df_p["tank"]):
+            plt.text(x, y, f"{y}", fontsize=7, ha="center", va="bottom")
+        for x, y in zip(df_p["timestamp"], df_p["rocket"]):
+            plt.text(x, y, f"{y}", fontsize=7, ha="center", va="bottom")
+        for x, y in zip(df_p["timestamp"], df_p["air"]):
+            plt.text(x, y, f"{y}", fontsize=7, ha="center", va="bottom")
+        plt.legend()
+        plt.xlabel("Date")
+        plt.ylabel("Strength (M)")
+        plt.tight_layout()
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
+        await interaction.response.send_message(file=discord.File(buf, "power.png"))
 async def setup_power_commands(bot: commands.Bot):
     # Přidá PowerCommands Cog do bota.
     await bot.add_cog(PowerCommands(bot))
