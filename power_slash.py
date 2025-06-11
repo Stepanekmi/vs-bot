@@ -85,9 +85,7 @@ class PowerCommands(commands.Cog):
             line += " ".join(parts) + f" | Total: +{total_delta:.2f}%"
             msg_lines.append(line)
 
-        full_msg = "
-
-".join(msg_lines)
+        full_msg = "\n\n".join(msg_lines)
 
         # Vykreslení grafu
         plt.figure(figsize=(8,4))
