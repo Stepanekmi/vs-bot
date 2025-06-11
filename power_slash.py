@@ -69,8 +69,7 @@ class PowerCommands(commands.Cog):
             values = df_p[team].tolist()
             if not values:
                 continue
-            line = f"{icons[team]} {team.upper()}:
-"
+            line = f"{icons[team]} {team.upper()}:\n""
             parts = [f"{values[0]:.2f}"]
             for i in range(1, len(values)):
                 prev, curr = values[i-1], values[i]
