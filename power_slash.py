@@ -61,12 +61,53 @@ class PowerCommands(commands.Cog):
         df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
         if df_p.empty:
             return await interaction.followup.send("⚠️ Player not found.", ephemeral=True)
+
+        # Sestavení textového výpisu s procenty
+        msg_lines = []
+        icons = {"tank": "🛡️", "rocket": "🚀", "air": "✈️"}
+        for team in ["tank", "rocket", "air"]:
+            values = df_p[team].tolist()
+            if not values:
+                continue
+            line = f"{icons[team]} {team.upper()}:
+"
+            parts = [f"{values[0]:.2f}"]
+            for i in range(1, len(values)):
+                prev, curr = values[i-1], values[i]
+                if prev > 0:
+                    delta = 100 * (curr - prev) / prev
+                else:
+                    delta = 0.0
+                parts.append(f"→ +{delta:.2f}% → {curr:.2f}")
+            if len(values) > 1 and values[0] > 0:
+                total_delta = 100 * (values[-1] - values[0]) / values[0]
+            else:
+                total_delta = 0.0
+            line += " ".join(parts) + f" | Total: +{total_delta:.2f}%"
+            msg_lines.append(line)
+
+        full_msg = "
+
+".join(msg_lines)
+
+        # Vykreslení grafu
         plt.figure(figsize=(8,4))
         for col in ["tank", "rocket", "air"]:
             plt.plot(df_p["timestamp"], df_p[col], marker="o", label=col.capitalize())
-        plt.legend(); plt.xlabel("Time"); plt.ylabel("Strength (M)"); plt.tight_layout()
-        buf = io.BytesIO(); plt.savefig(buf, format="png"); buf.seek(0)
-        await interaction.followup.send(file=discord.File(buf, "power_graph.png"))
+            for x, y in zip(df_p["timestamp"], df_p[col]):
+                plt.text(x, y, f"{y:.2f}", fontsize=8, ha='center', va='bottom')
+
+        plt.legend()
+        plt.xlabel("Time")
+        plt.ylabel("Strength (M)")
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
+        plt.close()
+
+        await interaction.followup.send(content=full_msg, file=discord.File(buf, "power_graph.png"))
         plt.close()
 
     @app_commands.command(name="powertopplayer", description="Show top players by power (3 teams)")
