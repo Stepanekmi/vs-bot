@@ -43,17 +43,13 @@ class PowerCommands(commands.Cog):
         df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
         df.to_csv(POWER_FILE, index=False)
         save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Power data for {player}")
-        msg = (f"✅ Data saved for **{player}**:
-"
-               f"Tank: {new['tank']:.2f}M
-"
-               f"Rocket: {new['rocket']:.2f}M
-"
-               f"Air: {new['air']:.2f}M")
-        if team4:
-            msg += f"
-Team4: {new['team4']:.2f}M"
-        await interaction.response.send_message(msg, ephemeral=True)
+        msg = (
+            f"✅ Data saved for **{player}**:\n"
+            f"Tank: {new['tank']:.2f}M\n"
+            f"Rocket: {new['rocket']:.2f}M\n"
+            f"Air: {new['air']:.2f}M"
+        )
+await interaction.response.send_message(msg, ephemeral=True)
 
     @app_commands.command(name="powerplayer", description="Show a player's strengths over time")
     @app_commands.guilds(GUILD)
