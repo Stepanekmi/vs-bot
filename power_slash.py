@@ -35,9 +35,13 @@ class PowerCommands(commands.Cog):
     async def powerenter(self, interaction: discord.Interaction,
                          player: str, tank: str, rocket: str, air: str, team4: str = None):
         df = pd.read_csv(POWER_FILE)
-        new = {"player": player, "tank": normalize(tank),
-               "rocket": normalize(rocket), "air": normalize(air),
-               "timestamp": datetime.utcnow().isoformat()}
+        new = {
+            "player": player,
+            "tank": normalize(tank),
+            "rocket": normalize(rocket),
+            "air": normalize(air),
+            "timestamp": datetime.utcnow().isoformat()
+        }
         if team4:
             new["team4"] = normalize(team4)
         df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
@@ -49,7 +53,9 @@ class PowerCommands(commands.Cog):
             f"Rocket: {new['rocket']:.2f}M\n"
             f"Air: {new['air']:.2f}M"
         )
-await interaction.response.send_message(msg, ephemeral=True)
+        if team4:
+            msg += f"\nTeam4: {new['team4']:.2f}M"
+        await interaction.response.send_message(msg, ephemeral=True)
 
     @app_commands.command(name="powerplayer", description="Show a player's strengths over time")
     @app_commands.guilds(GUILD)
@@ -68,8 +74,7 @@ await interaction.response.send_message(msg, ephemeral=True)
             values = df_p[team].tolist()
             if not values:
                 continue
-            line = f"{icons[team]} {team.upper()}:
-"
+            line = f"{icons[team]} {team.upper()}:\n"
             parts = [f"{values[0]:.2f}"]
             for i in range(1, len(values)):
                 prev, curr = values[i-1], values[i]
@@ -85,11 +90,9 @@ await interaction.response.send_message(msg, ephemeral=True)
             line += " ".join(parts) + f" | Total: +{total_delta:.2f}%"
             msg_lines.append(line)
 
-        full_msg = "
+        full_msg = "\n\n".join(msg_lines)
 
-".join(msg_lines)
-
-        plt.figure(figsize=(8,4))
+        plt.figure(figsize=(8, 4))
         for col in ["tank", "rocket", "air"]:
             plt.plot(df_p["timestamp"], df_p[col], marker="o", label=col.capitalize())
             for x, y in zip(df_p["timestamp"], df_p[col]):
