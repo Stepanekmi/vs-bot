@@ -1,6 +1,7 @@
 import pandas as pd
 import discord
 from discord import app_commands
+from discord.ui import Modal, InputText
 from discord.ext import commands
 import matplotlib.pyplot as plt
 import io
@@ -22,6 +23,90 @@ def normalize(val: str) -> float:
 class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+# ----------  /storm  ----------
+class StormTeamsModal(Modal, title="Storm – choose number of teams"):
+    teams = InputText(
+        label="Number of teams",
+        placeholder="e.g. 3",
+        min_length=1
+    )
+
+    def __init__(self, bot: commands.Bot):
+        super().__init__()
+        self.bot = bot
+
+    async def callback(self, interaction: discord.Interaction):
+        # 1) Validate input
+        try:
+            n = int(self.teams.value)
+            if n < 1:
+                raise ValueError
+        except ValueError:
+            return await interaction.response.send_message(
+                "⚠️ Please enter a positive integer.", ephemeral=True
+            )
+
+        # 2) Load last power values
+        import asyncio
+        loop = asyncio.get_running_loop()
+        df = await loop.run_in_executor(None, pd.read_csv, POWER_FILE)
+
+        if df.empty:
+            return await interaction.response.send_message(
+                "⚠️ No power data found.", ephemeral=True
+            )
+
+        df_last = (
+            df.sort_values("timestamp")
+              .groupby("player", as_index=False)
+              .last()
+        )
+        df_last["total"] = df_last[["tank", "rocket", "air"]].sum(axis=1)
+        ranked = df_last.sort_values("total", ascending=False).reset_index(drop=True)
+
+        if len(ranked) < 2 + n:
+            return await interaction.response.send_message(
+                "⚠️ Not enough players for that many teams.", ephemeral=True
+            )
+
+        # 3) Attackers
+        attackers = ranked.head(2)
+        remaining = ranked.iloc[2:].reset_index(drop=True)
+
+        # 4) Seed teams with strongest players
+        teams = [
+            {"members": [row["player"]], "power": row["total"]}
+            for _, row in remaining.head(n).iterrows()
+        ]
+        remaining = remaining.iloc[n:].reset_index(drop=True)
+
+        # 5) Greedy balance
+        for _, row in remaining.iterrows():
+            weakest = min(teams, key=lambda t: t["power"])
+            weakest["members"].append(row["player"])
+            weakest["power"] += row["total"]
+
+        # 6) Build output
+        lines = []
+        atk_line = ", ".join(
+            f"{row['player']} ({row['total']:.2f} M)"
+            for _, row in attackers.iterrows()
+        )
+        lines.append(f"🗡 **Attack:** {atk_line}")
+
+        for i, team in enumerate(teams, start=1):
+            members = ", ".join(team["members"])
+            lines.append(f"🏳️ **Team {i}** ({team['power']:.2f} M): {members}")
+
+        await interaction.response.send_message("\n".join(lines))
+
+@app_commands.command(name="storm", description="Split players into balanced storm teams")
+@app_commands.guilds(GUILD)
+async def storm(self, interaction: discord.Interaction):
+    """Create balanced storm teams"""
+    await interaction.response.send_modal(self.StormTeamsModal(self.bot))
+# ----------  /storm  ----------
 
     @app_commands.command(name="powerenter", description="Enter your team strengths (optional 4th team)")
     @app_commands.guilds(GUILD)
