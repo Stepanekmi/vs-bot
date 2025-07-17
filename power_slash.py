@@ -232,7 +232,7 @@ class PowerCommands(commands.Cog):
 
     )
 
-    async def powerenter(self, interaction: discord.Interaction,
+    async def powerenter(self, interaction: Interaction,
 
                          player: str, tank: str, rocket: str, air: str, team4: str = None):
 
@@ -278,7 +278,7 @@ class PowerCommands(commands.Cog):
 
     @app_commands.describe(player="Name of the player")
 
-    async def powerplayer(self, interaction: discord.Interaction, player: str):
+    async def powerplayer(self, interaction: Interaction, player: str):
 
         await interaction.response.defer(thinking=True)
 
@@ -418,7 +418,7 @@ class PowerCommands(commands.Cog):
 
 
 
-        async def callback(self, interaction: discord.Interaction):
+        async def callback(self, interaction: Interaction):
 
             await interaction.response.defer(thinking=True)
 
@@ -493,7 +493,7 @@ class PowerCommands(commands.Cog):
 
 @app_commands.command(name="powertopplayer", description="Show top players by power (3 teams)")
 @app_commands.guilds(GUILD)
-async def powertopplayer(self, interaction: discord.Interaction):
+async def powertopplayer(self, interaction: Interaction):
     df = pd.read_csv(POWER_FILE)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df_last = df.sort_values("timestamp").groupby("player", as_index=False).last()
@@ -522,7 +522,7 @@ async def powertopplayer(self, interaction: discord.Interaction):
 
     @app_commands.describe(player="Name of the player")
 
-    async def powererase(self, interaction: discord.Interaction, player: str):
+    async def powererase(self, interaction: Interaction, player: str):
 
         df = pd.read_csv(POWER_FILE)
 
@@ -550,7 +550,7 @@ async def powertopplayer(self, interaction: discord.Interaction):
 
     @app_commands.describe(player="Name of the player")
 
-    async def powerlist(self, interaction: discord.Interaction, player: str):
+    async def powerlist(self, interaction: Interaction, player: str):
 
         df = pd.read_csv(POWER_FILE)
 
