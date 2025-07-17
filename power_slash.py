@@ -1,7 +1,7 @@
 import pandas as pd
 import discord
 from discord import app_commands
-from discord.ui import Modal, InputText
+from discord.ui import Modal, TextInput
 from discord.ext import commands
 import matplotlib.pyplot as plt
 import io
@@ -26,7 +26,7 @@ class PowerCommands(commands.Cog):
 
 # ----------  /storm  ----------
 class StormTeamsModal(Modal, title="Storm – choose number of teams"):
-    teams = InputText(
+    teams = TextInput(
         label="Number of teams",
         placeholder="e.g. 3",
         min_length=1
