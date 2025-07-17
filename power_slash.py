@@ -21,66 +21,7 @@ def normalize(val: str) -> float:
     except:
         return 0.0
 
-class PowerCommands
-# ----------  /powererase  ----------
-class PowerEraseModal(Modal, title="Erase power data"):
-    player = TextInput(
-        label="Player name",
-        placeholder="exactly as in CSV",
-        required=True
-    )
-    scope = TextInput(
-        label="Delete 'last' or 'all'",
-        placeholder="last / all",
-        required=True,
-        max_length=4
-    )
-
-    def __init__(self, bot: commands.Bot):
-        super().__init__()
-        self.bot = bot
-
-    async def callback(self, interaction: discord.Interaction):
-        player_name = self.player.value.strip()
-        scope = self.scope.value.strip().lower()
-        if scope not in {"last", "all"}:
-            return await interaction.response.send_message(
-                "⚠️ Type **last** or **all** to specify what to delete.",
-                ephemeral=True
-            )
-
-        import pandas as pd, asyncio
-        loop = asyncio.get_running_loop()
-        df = await loop.run_in_executor(None, pd.read_csv, POWER_FILE)
-
-        if df.empty or player_name not in df["player"].values:
-            return await interaction.response.send_message(
-                f"⚠️ Player **{player_name}** not found.", ephemeral=True
-            )
-
-        before = len(df)
-        if scope == "all":
-            df = df[df["player"] != player_name]
-        else:  # last
-            df = df.sort_values("timestamp")
-            last_idx = df[df["player"] == player_name].index[-1]
-            df = df.drop(last_idx)
-
-        await loop.run_in_executor(None, df.to_csv, POWER_FILE, False, index=False)
-        save_to_github(POWER_FILE, f"Erase {scope} record(s) for {player_name}")
-        removed = before - len(df)
-        await interaction.response.send_message(
-            f"🗑 Deleted {removed} record{'s' if removed!=1 else ''} for **{player_name}**.",
-            ephemeral=True
-        )
-
-@app_commands.command(name="powererase", description="Erase last or all records for a player")
-@app_commands.guilds(GUILD)
-async def powererase(self, interaction: discord.Interaction):
-    """Opens modal to choose player and erase mode"""
-    await interaction.response.send_modal(self.PowerEraseModal(self.bot))
-# ----------  /powererase  ----------
-(commands.Cog):
+class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -245,6 +186,65 @@ async def powererase(self, interaction: discord.Interaction):
 
         await interaction.followup.send(full_msg)
         await interaction.followup.send(file=discord.File(buf, "power_graph.png"))
+    # ----------  /powererase  ----------
+    class PowerEraseModal(Modal, title="Erase power data"):
+        player = TextInput(
+            label="Player name",
+            placeholder="exactly as in CSV",
+            required=True
+        )
+        scope = TextInput(
+            label="Delete 'last' or 'all'",
+            placeholder="last / all",
+            required=True,
+            max_length=4
+        )
+
+        def __init__(self, bot: commands.Bot):
+            super().__init__()
+            self.bot = bot
+
+        async def callback(self, interaction: discord.Interaction):
+            player_name = self.player.value.strip()
+            scope = self.scope.value.strip().lower()
+            if scope not in {"last", "all"}:
+                return await interaction.response.send_message(
+                    "⚠️ Type **last** or **all** to specify what to delete.",
+                    ephemeral=True
+                )
+
+            import pandas as pd, asyncio
+            loop = asyncio.get_running_loop()
+            df = await loop.run_in_executor(None, pd.read_csv, POWER_FILE)
+
+            if df.empty or player_name not in df["player"].values:
+                return await interaction.response.send_message(
+                    f"⚠️ Player **{player_name}** not found.", ephemeral=True
+                )
+
+            before = len(df)
+            if scope == "all":
+                df = df[df["player"] != player_name]
+            else:  # last
+                df = df.sort_values("timestamp")
+                last_idx = df[df["player"] == player_name].index[-1]
+                df = df.drop(last_idx)
+
+            await loop.run_in_executor(None, df.to_csv, POWER_FILE, False, index=False)
+            save_to_github(POWER_FILE, f"Erase {scope} record(s) for {player_name}")
+            removed = before - len(df)
+            await interaction.response.send_message(
+                f"🗑 Deleted {removed} record{'s' if removed!=1 else ''} for **{player_name}**.",
+                ephemeral=True
+            )
+
+    @app_commands.command(name="powererase", description="Erase last or all records for a player")
+    @app_commands.guilds(GUILD)
+    async def powererase(self, interaction: discord.Interaction):
+        """Open modal to choose player and erase mode"""
+        await interaction.response.send_modal(self.PowerEraseModal(self.bot))
+    # ----------  /powererase  ----------
+
     @app_commands.command(name="powertopplayer", description="Show top players by power (3 teams)")
     @app_commands.guilds(GUILD)
     async def powertopplayer(self, interaction: discord.Interaction):
