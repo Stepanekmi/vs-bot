@@ -257,11 +257,11 @@ class PowerCommands(commands.Cog):
         sorted_total = df_last.sort_values("total", ascending=False)
         msg = "**🥇 All by single-team strength**\n" + "\n".join(
             f"{i+1}. {r['player']} – {r['max_team']:.2f}M"
-            for i, r in enumerate(sorted_max.itertuples(), start=1):
+            for i, r in enumerate(sorted_max.itertuples(), start=1)
         )
         msg += "\n\n**🏆 All by total strength**\n" + "\n".join(
             f"{i+1}. {r['player']} – {r['total']:.2f}M"
-            for i, r in enumerate(sorted_total.itertuples(), start=1):
+            for i, r in enumerate(sorted_total.itertuples(), start=1)
         )
         await interaction.response.send_message(msg, ephemeral=True)
 
