@@ -194,8 +194,7 @@ class VSCommands(commands.Cog):
             "/powertopplayer4 – show all power rankings (incl. optional 4th team)\n"
             "/powererase player – erase all power records for a player\n"
             "/powerlist player – list & optionally delete power entries\n"
-            "/powerplayervsplayer player1 player2 team – compare two players by selected team\n""/storm – split players into balanced storm teams\n"
-
+            "/powerplayervsplayer player1 player2 team – compare two players by selected team\n"
             "/info – show this help message\n"
         )
         await interaction.response.send_message(help_text, ephemeral=True)
