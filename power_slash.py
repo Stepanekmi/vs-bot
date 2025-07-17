@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ui import Modal, TextInput
-from discord import Interaction
+from discord import Interaction, TextStyle
 import matplotlib.pyplot as plt
 import io
 from datetime import datetime
@@ -31,7 +31,8 @@ class PowerCommands(commands.Cog):
         teams = TextInput(
             label="Number of teams",
             placeholder="e.g. 3",
-            min_length=1
+            min_length=1,
+            style=TextStyle.short
         )
 
         def __init__(self, bot: commands.Bot):
@@ -39,6 +40,7 @@ class PowerCommands(commands.Cog):
             self.bot = bot
 
         async def callback(self, interaction: Interaction):
+            await interaction.response.defer(thinking=True)
             # validate input
             try:
                 n = int(self.teams.value)
@@ -191,12 +193,14 @@ class PowerCommands(commands.Cog):
         player = TextInput(
             label="Player name",
             placeholder="exactly as in CSV",
-            required=True
+            required=True,
+            style=TextStyle.short
         )
         scope = TextInput(
             label="Delete 'last' or 'all'",
             placeholder="last / all",
             required=True,
+            style=TextStyle.short,
             max_length=4
         )
 
@@ -205,6 +209,7 @@ class PowerCommands(commands.Cog):
             self.bot = bot
 
         async def callback(self, interaction: discord.Interaction):
+            await interaction.response.defer(thinking=True)
             player_name = self.player.value.strip()
             scope = self.scope.value.strip().lower()
             if scope not in {"last", "all"}:
@@ -238,114 +243,7 @@ class PowerCommands(commands.Cog):
                 ephemeral=True
             )
 
-    @app_commands.command(name="powererase", description="Erase last or all records for a player")
-    @app_commands.guilds(GUILD)
-    async def powererase(self, interaction: discord.Interaction):
-        """Open modal to choose player and erase mode"""
-        await interaction.response.send_modal(self.PowerEraseModal(self.bot))
-    # ----------  /powererase  ----------
-
-    @app_commands.command(name="powertopplayer", description="Show top players by power (3 teams)")
-    @app_commands.guilds(GUILD)
-    async def powertopplayer(self, interaction: discord.Interaction):
-        df = pd.read_csv(POWER_FILE)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df_last = df.sort_values("timestamp").groupby("player", as_index=False).last()
-        df_last["max_team"] = df_last[["tank","rocket","air"]].max(axis=1)
-        df_last["total"]    = df_last[["tank","rocket","air"]].sum(axis=1)
-        sorted_max = df_last.sort_values("max_team", ascending=False)
-        sorted_total = df_last.sort_values("total", ascending=False)
-        msg = "**🥇 All by single-team strength**\n" + "\n".join(
-            f"{i+1}. {r['player']} – {r['max_team']:.2f}M"
-            for i, r in enumerate(sorted_max.itertuples(), start=1)
-        )
-        msg += "\n\n**🏆 All by total strength**\n" + "\n".join(
-            f"{i+1}. {r['player']} – {r['total']:.2f}M"
-            for i, r in enumerate(sorted_total.itertuples(), start=1)
-        )
-        await interaction.response.send_message(msg, ephemeral=True)
-
-    @app_commands.command(name="powerplayervsplayer", description="Compare two players by a selected team")
-    @app_commands.guilds(GUILD)
-    @app_commands.describe(
-        player1="First player name",
-        player2="Second player name",
-        team="Team to compare (tank, rocket, air, team4)"
-    )
-    async def powerplayervsplayer(self, interaction: discord.Interaction,
-                                  player1: str, player2: str, team: str):
-        df = pd.read_csv(POWER_FILE)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        team = team.lower()
-
-        # Kontrola, že tým existuje
-        if team not in df.columns:
-            return await interaction.response.send_message(
-                f"⚠️ Unknown team '{team}'. Choose from tank, rocket, air, team4.", ephemeral=True
-            )
-
-        # Najdi poslední záznamy obou hráčů
-        last = df.sort_values("timestamp").groupby("player", as_index=False).last()
-        p1 = last[last["player"].str.lower() == player1.lower()]
-        p2 = last[last["player"].str.lower() == player2.lower()]
-        if p1.empty or p2.empty:
-            return await interaction.response.send_message(
-                "⚠️ One or both players not found.", ephemeral=True
-            )
-        val1 = p1.iloc[0][team]
-        val2 = p2.iloc[0][team]
-        diff = abs(val1 - val2)
-        if val1 > val2:
-            winner = player1
-        elif val2 > val1:
-            winner = player2
-        else:
-            winner = "Tie"
-
-        msg = (f"🔍 Comparing **{team.capitalize()}** strength:\n"
-               f"{player1}: {val1:.2f}M\n"
-               f"{player2}: {val2:.2f}M\n"
-               f"Difference: {diff:.2f}M\n"
-               f"Winner: {winner}")
-
-        # Přidej GRAF progressu obou hráčů
-        df1 = df[df["player"].str.lower() == player1.lower()].sort_values("timestamp")
-        df2 = df[df["player"].str.lower() == player2.lower()].sort_values("timestamp")
-
-        plt.figure(figsize=(8,4))
-        plt.plot(df1["timestamp"], df1[team], marker="o", label=player1)
-        plt.plot(df2["timestamp"], df2[team], marker="o", label=player2)
-        plt.xlabel("Time")
-        plt.ylabel(f"{team.capitalize()} Strength (M)")
-        plt.title(f"{team.capitalize()} progress: {player1} vs {player2}")
-        plt.legend()
-        plt.tight_layout()
-
-        buf = io.BytesIO()
-        plt.savefig(buf, format="png")
-        buf.seek(0)
-        plt.close()
-
-        # Odpověď pošle text i graf
-        await interaction.response.send_message(msg, ephemeral=True)
-        await interaction.followup.send(file=discord.File(buf, "progress.png"))
-
-    @app_commands.command(name="powertopplayer4", description="Show top players by power (all 4 teams)")
-    @app_commands.guilds(GUILD)
-    async def powertopplayer4(self, interaction: discord.Interaction):
-        df = pd.read_csv(POWER_FILE)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        if "team4" not in df.columns:
-            return await interaction.response.send_message("No data for team4.", ephemeral=True)
-        df_last = df.sort_values("timestamp").groupby("player", as_index=False).last()
-        df_last["max_team"] = df_last[["tank","rocket","air","team4"]].max(axis=1)
-        df_last["total"]    = df_last[["tank","rocket","air","team4"]].sum(axis=1)
-        sorted_max = df_last.sort_values("max_team", ascending=False)
-        sorted_total = df_last.sort_values("total", ascending=False)
-        msg = "**🥇 All by single-team strength (incl. team4)**\n" + "\n".join(
-            f"{i+1}. {r['player']} – {r['max_team']:.2f}M"
-            for i, r in sorted_max.iterrows()
-        )
+    
         msg += "\n\n**🏆 All by total strength (incl. team4)**\n" + "\n".join(
             f"{i+1}. {r['player']} – {r['total']:.2f}M"
             for i, r in sorted_total.iterrows()
