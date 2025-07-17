@@ -2,6 +2,8 @@ import pandas as pd
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord.ui import Modal, TextInput
+from discord import Interaction
 import matplotlib.pyplot as plt
 import io
 from datetime import datetime
@@ -19,10 +21,148 @@ def normalize(val: str) -> float:
     except:
         return 0.0
 
-class PowerCommands(commands.Cog):
+class PowerCommands
+# ----------  /powererase  ----------
+class PowerEraseModal(Modal, title="Erase power data"):
+    player = TextInput(
+        label="Player name",
+        placeholder="exactly as in CSV",
+        required=True
+    )
+    scope = TextInput(
+        label="Delete 'last' or 'all'",
+        placeholder="last / all",
+        required=True,
+        max_length=4
+    )
+
+    def __init__(self, bot: commands.Bot):
+        super().__init__()
+        self.bot = bot
+
+    async def callback(self, interaction: discord.Interaction):
+        player_name = self.player.value.strip()
+        scope = self.scope.value.strip().lower()
+        if scope not in {"last", "all"}:
+            return await interaction.response.send_message(
+                "⚠️ Type **last** or **all** to specify what to delete.",
+                ephemeral=True
+            )
+
+        import pandas as pd, asyncio
+        loop = asyncio.get_running_loop()
+        df = await loop.run_in_executor(None, pd.read_csv, POWER_FILE)
+
+        if df.empty or player_name not in df["player"].values:
+            return await interaction.response.send_message(
+                f"⚠️ Player **{player_name}** not found.", ephemeral=True
+            )
+
+        before = len(df)
+        if scope == "all":
+            df = df[df["player"] != player_name]
+        else:  # last
+            df = df.sort_values("timestamp")
+            last_idx = df[df["player"] == player_name].index[-1]
+            df = df.drop(last_idx)
+
+        await loop.run_in_executor(None, df.to_csv, POWER_FILE, False, index=False)
+        save_to_github(POWER_FILE, f"Erase {scope} record(s) for {player_name}")
+        removed = before - len(df)
+        await interaction.response.send_message(
+            f"🗑 Deleted {removed} record{'s' if removed!=1 else ''} for **{player_name}**.",
+            ephemeral=True
+        )
+
+@app_commands.command(name="powererase", description="Erase last or all records for a player")
+@app_commands.guilds(GUILD)
+async def powererase(self, interaction: discord.Interaction):
+    """Opens modal to choose player and erase mode"""
+    await interaction.response.send_modal(self.PowerEraseModal(self.bot))
+# ----------  /powererase  ----------
+(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+
+    # ----------  /storm  ----------
+    class StormTeamsModal(Modal, title="Storm – choose number of teams"):
+        teams = TextInput(
+            label="Number of teams",
+            placeholder="e.g. 3",
+            min_length=1
+        )
+
+        def __init__(self, bot: commands.Bot):
+            super().__init__()
+            self.bot = bot
+
+        async def callback(self, interaction: Interaction):
+            # validate input
+            try:
+                n = int(self.teams.value)
+                if n < 1:
+                    raise ValueError
+            except ValueError:
+                return await interaction.response.send_message(
+                    "⚠️ Please enter a positive integer.", ephemeral=True
+                )
+
+            import asyncio, pandas as pd
+            loop = asyncio.get_running_loop()
+            df = await loop.run_in_executor(None, pd.read_csv, POWER_FILE)
+
+            if df.empty:
+                return await interaction.response.send_message(
+                    "⚠️ No power data found.", ephemeral=True
+                )
+
+            df_last = (
+                df.sort_values("timestamp")
+                  .groupby("player", as_index=False)
+                  .last()
+            )
+            df_last["total"] = df_last[["tank", "rocket", "air"]].sum(axis=1)
+            ranked = df_last.sort_values("total", ascending=False).reset_index(drop=True)
+
+            if len(ranked) < 2 + n:
+                return await interaction.response.send_message(
+                    "⚠️ Not enough players for that many teams.", ephemeral=True
+                )
+
+            attackers = ranked.head(2)
+            remaining = ranked.iloc[2:].reset_index(drop=True)
+
+            teams = [
+                {"members": [row["player"]], "power": row["total"]}
+                for _, row in remaining.head(n).iterrows()
+            ]
+            remaining = remaining.iloc[n:].reset_index(drop=True)
+
+            for _, row in remaining.iterrows():
+                weakest = min(teams, key=lambda t: t["power"])
+                weakest["members"].append(row["player"])
+                weakest["power"] += row["total"]
+
+            lines = []
+            atk_line = ", ".join(
+                f"{row['player']} ({row['total']:.2f} M)"
+                for _, row in attackers.iterrows()
+            )
+            lines.append(f"🗡 **Attack:** {atk_line}")
+
+            for i, t in enumerate(teams, start=1):
+                members = ", ".join(t["members"])
+                lines.append(f"🏳️ **Team {i}** ({t['power']:.2f} M): {members}")
+
+            await interaction.response.send_message("\n".join(lines))
+
+    @app_commands.command(name="storm", description="Split players into balanced storm teams")
+    @app_commands.guilds(GUILD)
+    async def storm(self, interaction: Interaction):
+        """Slash command that opens the Storm modal"""
+        await interaction.response.send_modal(self.StormTeamsModal(self.bot))
+    # ----------  /storm  ----------
     @app_commands.command(name="powerenter", description="Enter your team strengths (optional 4th team)")
     @app_commands.guilds(GUILD)
     @app_commands.describe(
@@ -117,11 +257,11 @@ class PowerCommands(commands.Cog):
         sorted_total = df_last.sort_values("total", ascending=False)
         msg = "**🥇 All by single-team strength**\n" + "\n".join(
             f"{i+1}. {r['player']} – {r['max_team']:.2f}M"
-            for i, r in sorted_max.iterrows()
+            for i, r in enumerate(sorted_max.itertuples(), start=1):
         )
         msg += "\n\n**🏆 All by total strength**\n" + "\n".join(
             f"{i+1}. {r['player']} – {r['total']:.2f}M"
-            for i, r in sorted_total.iterrows()
+            for i, r in enumerate(sorted_total.itertuples(), start=1):
         )
         await interaction.response.send_message(msg, ephemeral=True)
 
