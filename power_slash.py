@@ -226,7 +226,138 @@ class PowerCommands(commands.Cog):
             f"✅ Erased {n_removed} records for **{player}**.", ephemeral=True
         )
 
-    @app_commands.command(name="powerlist", description="List all power records for a player (with option to delete)")
+    
+    # ---------- stormsetup ----------
+    class PlayerSelectView(discord.ui.View):
+        def __init__(self, bot: commands.Bot, teams: int, players: list[str]):
+            super().__init__(timeout=180)
+            self.bot = bot
+            self.teams = teams
+            self.players = players
+            self.selected_main = []
+            self.selected_subs = []
+
+            opts = [discord.SelectOption(label=p) for p in players]
+            self.select_main = discord.ui.Select(placeholder="Pick main players (max 20)",
+                                                 min_values=1, max_values=min(20,len(players)), options=opts)
+            self.select_main.callback = self.main_selected
+            self.add_item(self.select_main)
+
+            next_btn = discord.ui.Button(label="Next", style=discord.ButtonStyle.primary)
+            async def cb(inter):
+                await self.to_subs(inter)
+            next_btn.callback = cb
+            self.add_item(next_btn)
+
+        async def main_selected(self, interaction: Interaction):
+            self.selected_main = self.select_main.values
+            await interaction.response.defer()
+
+        async def to_subs(self, interaction: Interaction):
+            if not self.selected_main:
+                return await interaction.response.send_message("Select at least one main player.", ephemeral=True)
+            self.clear_items()
+            remaining = [p for p in self.players if p not in self.selected_main]
+            opts = [discord.SelectOption(label=p) for p in remaining]
+            self.select_subs = discord.ui.Select(placeholder="Pick substitutes (optional)",
+                                                 min_values=0, max_values=min(10,len(remaining)), options=opts)
+            async def subs_cb(sub_inter):
+                self.selected_subs = self.select_subs.values
+                await sub_inter.response.defer()
+            self.select_subs.callback = subs_cb
+            self.add_item(self.select_subs)
+
+            done = discord.ui.Button(label="Done", style=discord.ButtonStyle.success)
+            async def finish_cb(fin_inter):
+                await self.finish(fin_inter)
+            done.callback = finish_cb
+            self.add_item(done)
+            await interaction.response.edit_message(view=self)
+
+        async def finish(self, interaction: Interaction):
+            await interaction.response.defer(thinking=True)
+            selected = list(self.selected_main) + list(self.selected_subs)
+
+            import asyncio
+            loop = asyncio.get_running_loop()
+            df = await loop.run_in_executor(None, pd.read_csv, POWER_FILE)
+            df_last = df.sort_values("timestamp").groupby("player", as_index=False).last()
+            df_last = df_last[df_last["player"].isin(selected)]
+            df_last["total"] = df_last[["tank","rocket","air"]].sum(axis=1)
+            ranked = df_last.sort_values("total", ascending=False).reset_index(drop=True)
+
+            if len(ranked) < 2 + self.teams:
+                return await interaction.followup.send("Not enough players for chosen team count.", ephemeral=True)
+
+            attackers = ranked.head(2)
+            remaining = ranked.iloc[2:].reset_index(drop=True)
+            teams = [{"members":[row['player']], "power":row['total']} for _,row in remaining.head(self.teams).iterrows()]
+            remaining = remaining.iloc[self.teams:].reset_index(drop=True)
+            for _, row in remaining.iterrows():
+                weakest = min(teams, key=lambda t: t['power'])
+                weakest['members'].append(row['player'])
+                weakest['power'] += row['total']
+
+            lines=[]
+            atk_line = ", ".join(f"{row['player']} ({row['total']:.2f}M)" for _,row in attackers.iterrows())
+            lines.append(f"🗡 **Attack:** {atk_line}")
+            for i,t in enumerate(teams, start=1):
+                members = ", ".join(t['members'])
+                lines.append(f"🏳️ **Team {i}** ({t['power']:.2f}M): {members}")
+            subs_line = ", ".join(sorted(self.selected_subs))
+            if subs_line:
+                lines.append(f"♻️ **Subs:** {subs_line}")
+            await interaction.followup.send("\n".join(lines))
+            self.stop()
+
+    @app_commands.command(name="stormsetup", description="Create balanced teams with selectable players")
+    @app_commands.guilds(GUILD)
+    @app_commands.describe(teams="Number of teams (1-10)")
+    async def stormsetup(self, interaction: Interaction, teams: int):
+        if not (1 <= teams <= 10):
+            return await interaction.response.send_message("Teams must be 1-10.", ephemeral=True)
+        df = pd.read_csv(POWER_FILE)
+        players = sorted(df["player"].unique())
+        view = self.PlayerSelectView(self.bot, teams, players)
+        await interaction.response.send_message("Select main players:", view=view, ephemeral=True)
+
+    # ---------- powererase modal ----------
+    class PowerEraseModal(Modal, title="Erase power data"):
+        player = TextInput(label="Player name", placeholder="exact name", style=TextStyle.short, required=True)
+        scope = TextInput(label="Delete 'last' or 'all'", placeholder="last / all", style=TextStyle.short, required=True, max_length=4)
+
+        def __init__(self, bot: commands.Bot):
+            super().__init__()
+            self.bot = bot
+
+        async def callback(self, interaction: Interaction):
+            await interaction.response.defer(thinking=True)
+            player_name=self.player.value.strip()
+            scope=self.scope.value.strip().lower()
+            if scope not in {"last","all"}:
+                return await interaction.followup.send("Type last or all.", ephemeral=True)
+            import asyncio
+            loop=asyncio.get_running_loop()
+            df=await loop.run_in_executor(None, pd.read_csv, POWER_FILE)
+            if player_name not in df["player"].values:
+                return await interaction.followup.send("Player not found.",ephemeral=True)
+            before=len(df)
+            if scope=="all":
+                df=df[df["player"]!=player_name]
+            else:
+                df=df.sort_values("timestamp")
+                idx=df[df["player"]==player_name].index[-1]
+                df=df.drop(idx)
+            await loop.run_in_executor(None, df.to_csv, POWER_FILE, False, index=False)
+            save_to_github(POWER_FILE, f"Erase {scope} for {player_name}")
+            await interaction.followup.send(f"🗑 Deleted {before-len(df)} record(s) for **{player_name}**.", ephemeral=True)
+
+    @app_commands.command(name="powererase", description="Erase power records (last / all)")
+    @app_commands.guilds(GUILD)
+    async def powererase(self, interaction: Interaction):
+        await interaction.response.send_modal(self.PowerEraseModal(self.bot))
+    # --------------------------------------
+@app_commands.command(name="powerlist", description="List all power records for a player (with option to delete)")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Name of the player")
     async def powerlist(self, interaction: discord.Interaction, player: str):
