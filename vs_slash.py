@@ -2,6 +2,7 @@ import pandas as pd
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord import Interaction, TextStyle
 import matplotlib.pyplot as plt
 import io
 from github_sync import save_to_github
