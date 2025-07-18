@@ -357,7 +357,7 @@ class PowerCommands(commands.Cog):
     async def powererase(self, interaction: Interaction):
         await interaction.response.send_modal(self.PowerEraseModal(self.bot))
     # --------------------------------------
-@app_commands.command(name="powerlist", description="List all power records for a player (with option to delete)")
+    @app_commands.command(name="powerlist", description="List all power records for a player (with option to delete)")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Name of the player")
     async def powerlist(self, interaction: discord.Interaction, player: str):
