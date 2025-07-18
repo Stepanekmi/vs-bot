@@ -1,7 +1,8 @@
 import pandas as pd
 import discord
-from discord import app_commands
+from discord import app_commands, Interaction, TextStyle
 from discord.ext import commands
+from discord.ui import Modal, TextInput
 import matplotlib.pyplot as plt
 import io
 from datetime import datetime
