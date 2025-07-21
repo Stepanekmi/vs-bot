@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import discord
 from discord import app_commands, Interaction, TextStyle
@@ -12,7 +13,7 @@ from github_sync import save_to_github
 GUILD_ID = 1231529219029340234
 GUILD = discord.Object(id=GUILD_ID)
 
-POWER_FILE = "power_data.csv"
+POWER_FILE = os.path.join(os.path.dirname(__file__), "data", "power_data.csv")
 
 def normalize(val: str) -> float:
     try:
@@ -33,7 +34,7 @@ class PowerCommands(commands.Cog):
         air="Strength of air team (M)",
         team4="(Optional) Strength of fourth team (M)"
     )
-    async def powerenter(self, interaction: Interaction,
+    async def powerenter(self, interaction: discord.Interaction,
                          player: str, tank: str, rocket: str, air: str, team4: str = None):
         df = pd.read_csv(POWER_FILE)
         new = {"player": player, "tank": normalize(tank),
@@ -56,7 +57,7 @@ class PowerCommands(commands.Cog):
     @app_commands.command(name="powerplayer", description="Show a player's strengths over time")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Name of the player")
-    async def powerplayer(self, interaction: Interaction, player: str):
+    async def powerplayer(self, interaction: discord.Interaction, player: str):
         await interaction.response.defer(thinking=True)
         df = pd.read_csv(POWER_FILE)
         df["timestamp"] = pd.to_datetime(df["timestamp"])
@@ -108,7 +109,7 @@ class PowerCommands(commands.Cog):
         await interaction.followup.send(file=discord.File(buf, "power_graph.png"))
     @app_commands.command(name="powertopplayer", description="Show top players by power (3 teams)")
     @app_commands.guilds(GUILD)
-    async def powertopplayer(self, interaction: Interaction):
+    async def powertopplayer(self, interaction: discord.Interaction):
         df = pd.read_csv(POWER_FILE)
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df_last = df.sort_values("timestamp").groupby("player", as_index=False).last()
@@ -133,7 +134,7 @@ class PowerCommands(commands.Cog):
         player2="Second player name",
         team="Team to compare (tank, rocket, air, team4)"
     )
-    async def powerplayervsplayer(self, interaction: Interaction,
+    async def powerplayervsplayer(self, interaction: discord.Interaction,
                                   player1: str, player2: str, team: str):
         df = pd.read_csv(POWER_FILE)
         df["timestamp"] = pd.to_datetime(df["timestamp"])
@@ -193,7 +194,7 @@ class PowerCommands(commands.Cog):
 
     @app_commands.command(name="powertopplayer4", description="Show top players by power (all 4 teams)")
     @app_commands.guilds(GUILD)
-    async def powertopplayer4(self, interaction: Interaction):
+    async def powertopplayer4(self, interaction: discord.Interaction):
         df = pd.read_csv(POWER_FILE)
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         if "team4" not in df.columns:
@@ -216,7 +217,7 @@ class PowerCommands(commands.Cog):
     @app_commands.command(name="powererase", description="Erase all power records for a player")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Name of the player")
-    async def powererase(self, interaction: Interaction, player: str):
+    async def powererase(self, interaction: discord.Interaction, player: str):
         df = pd.read_csv(POWER_FILE)
         n_before = len(df)
         df = df[df["player"].str.lower() != player.lower()]
@@ -361,7 +362,7 @@ class PowerCommands(commands.Cog):
     @app_commands.command(name="powerlist", description="List all power records for a player (with option to delete)")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Name of the player")
-    async def powerlist(self, interaction: Interaction, player: str):
+    async def powerlist(self, interaction: discord.Interaction, player: str):
         df = pd.read_csv(POWER_FILE)
         df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
         if df_p.empty:
