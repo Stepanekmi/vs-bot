@@ -193,10 +193,10 @@ class VSCommands(commands.Cog):
             "/powerenter player tank rocket air [team4] – enter power data\n"
             "/powertopplayer – show all power rankings (3 teams)\n"
             "/powertopplayer4 – show all power rankings (incl. optional 4th team)\n"
-            "/powererase player – erase all power records for a player\n"
+            "/powererase – erase power records (last / all)\n"
             "/powerlist player – list & optionally delete power entries\n"
-            "/powerplayervsplayer player1 player2 team – compare two players by selected team\n"
-            "/stormsetup teams:<#> – create balanced storm teams\n"
+            "/powerplayervsplayer player1 player2 team – compare two players by selected team\n/stormsetup teams:<#> – create balanced storm teams\n"
+            ""
 
             "/info – show this help message\n"
         )
