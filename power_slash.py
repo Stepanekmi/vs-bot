@@ -13,7 +13,7 @@ from github_sync import save_to_github
 GUILD_ID = 1231529219029340234
 GUILD = discord.Object(id=GUILD_ID)
 
-POWER_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "power_data.csv")
+POWER_FILE = "power_data.csv"        # hledá v kořeni projektu
 
 def normalize(val: str) -> float:
     try:
