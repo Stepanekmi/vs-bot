@@ -77,16 +77,4 @@ threading.Thread(
 print("🔑 Starting bot…")
 attempt = 0
 MAX_SLEEP = 600  # 10 min
-while True:
-    try:
-        bot.run(TOKEN)
-        attempt = 0  # reset if bot exits cleanly later
-        break
-    except discord.errors.HTTPException as e:
-        if e.status == 429:
-            wait = min(2 ** attempt, MAX_SLEEP)
-            print(f"⚠️ 429 rate‑limit, retry in {wait}s (attempt {attempt+1})")
-            time.sleep(wait)
-            attempt += 1
-            continue
-        raise
+bot.run(TOKEN)
