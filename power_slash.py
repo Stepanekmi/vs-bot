@@ -15,14 +15,13 @@ from github_sync import save_to_github
 # ---------- config ----------
 GUILD_ID = 1231529219029340234
 GUILD = discord.Object(id=GUILD_ID)
-POWER_FILE = "data/power_data.csv"          # CSV žije ve složce data/
+POWER_FILE = "power_data.csv"              # zpět do kořene projektu
 
 # ---------- util ----------
 logging.basicConfig(level=logging.INFO)
 
 
 def normalize(val: str) -> float:
-    """Convert '12.3M' -> 12.3"""
     try:
         return round(float(val.strip().upper().rstrip("M")), 2)
     except Exception:
@@ -30,7 +29,6 @@ def normalize(val: str) -> float:
 
 
 def safe_send_ephemeral(interaction: Interaction, msg: str):
-    """Send an ephemeral message even if we've already responded."""
     try:
         if interaction.response.is_done():
             return interaction.followup.send(msg, ephemeral=True)
@@ -76,7 +74,7 @@ class PowerCommands(commands.Cog):
 
         df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
         df.to_csv(POWER_FILE, index=False)
-        save_to_github(POWER_FILE, POWER_FILE, f"Power data for {player}")
+        save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Power data for {player}")
 
         msg = (
             f"✅ Data saved for **{player}**:\n"
@@ -167,7 +165,7 @@ class PowerCommands(commands.Cog):
         )
         await interaction.response.send_message(msg, ephemeral=True)
 
-    # ------------------------------------------------------------- powertopplayer4 (all teams)
+    # ------------------------------------------------------------- powertopplayer4
     @app_commands.command(name="powertopplayer4", description="Show top players by power (all 4 teams)")
     @app_commands.guilds(GUILD)
     async def powertopplayer4(self, interaction: Interaction):
@@ -456,7 +454,7 @@ class PowerCommands(commands.Cog):
                     df = df.drop(idx)
 
                 await loop.run_in_executor(None, lambda: df.to_csv(POWER_FILE, index=False))
-                save_to_github(POWER_FILE, POWER_FILE, f"Erase {scope} for {player_name}")
+                save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Erase {scope} for {player_name}")
 
                 await interaction.followup.send(
                     f"🗑 Deleted {before - len(df)} record(s) for **{player_name}**.",
