@@ -15,7 +15,7 @@ from github_sync import save_to_github
 # ---------- config ----------
 GUILD_ID = 1231529219029340234
 GUILD = discord.Object(id=GUILD_ID)
-POWER_FILE = "power_data.csv"  # CSV v kořeni projektu
+POWER_FILE = "data/power_data.csv"          # CSV žije ve složce data/
 
 # ---------- util ----------
 logging.basicConfig(level=logging.INFO)
@@ -30,7 +30,7 @@ def normalize(val: str) -> float:
 
 
 def safe_send_ephemeral(interaction: Interaction, msg: str):
-    """Safely send an ephemeral message even if the interaction has already been responded to."""
+    """Send an ephemeral message even if we've already responded."""
     try:
         if interaction.response.is_done():
             return interaction.followup.send(msg, ephemeral=True)
@@ -44,7 +44,7 @@ class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ------------------------------------------------------------------ powerenter
+    # ------------------------------------------------------------- powerenter
     @app_commands.command(name="powerenter", description="Enter your team strengths (optional 4th team)")
     @app_commands.guilds(GUILD)
     @app_commands.describe(
@@ -76,7 +76,7 @@ class PowerCommands(commands.Cog):
 
         df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
         df.to_csv(POWER_FILE, index=False)
-        save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Power data for {player}")
+        save_to_github(POWER_FILE, POWER_FILE, f"Power data for {player}")
 
         msg = (
             f"✅ Data saved for **{player}**:\n"
@@ -88,7 +88,7 @@ class PowerCommands(commands.Cog):
             msg += f"\nTeam4: {new['team4']:.2f}M"
         await interaction.response.send_message(msg, ephemeral=True)
 
-    # ------------------------------------------------------------------ powerplayer
+    # ------------------------------------------------------------- powerplayer
     @app_commands.command(name="powerplayer", description="Show a player's strengths over time")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Name of the player")
@@ -144,7 +144,7 @@ class PowerCommands(commands.Cog):
         await interaction.followup.send(full_msg, ephemeral=True)
         await interaction.followup.send(file=discord.File(buf, "power_graph.png"), ephemeral=True)
 
-    # ------------------------------------------------------------------ powertopplayer (3 teams)
+    # ------------------------------------------------------------- powertopplayer (3 teams)
     @app_commands.command(name="powertopplayer", description="Show top players by power (3 teams)")
     @app_commands.guilds(GUILD)
     async def powertopplayer(self, interaction: Interaction):
@@ -167,7 +167,7 @@ class PowerCommands(commands.Cog):
         )
         await interaction.response.send_message(msg, ephemeral=True)
 
-    # ------------------------------------------------------------------ powertopplayer4 (all teams)
+    # ------------------------------------------------------------- powertopplayer4 (all teams)
     @app_commands.command(name="powertopplayer4", description="Show top players by power (all 4 teams)")
     @app_commands.guilds(GUILD)
     async def powertopplayer4(self, interaction: Interaction):
@@ -189,7 +189,7 @@ class PowerCommands(commands.Cog):
         )
         await interaction.response.send_message(msg, ephemeral=True)
 
-    # ------------------------------------------------------------------ powerplayervsplayer
+    # ------------------------------------------------------------- powerplayervsplayer
     @app_commands.command(name="powerplayervsplayer", description="Compare two players by a selected team")
     @app_commands.guilds(GUILD)
     @app_commands.describe(
@@ -247,9 +247,9 @@ class PowerCommands(commands.Cog):
         await interaction.response.send_message(msg, ephemeral=True)
         await interaction.followup.send(file=discord.File(buf, "progress.png"), ephemeral=True)
 
-    # ================================================================== stormsetup
+    # ============================================================= stormsetup
     class PlayerSelectView(discord.ui.View):
-        """Two‑step player picker: first up to 20 mains, then up to 20 subs."""
+        """Two‑step picker: first up to 20 mains, pak všechny zbylé jako subs."""
 
         def __init__(self, bot: commands.Bot, teams: int, players: list[str]):
             super().__init__(timeout=180)
@@ -261,13 +261,12 @@ class PowerCommands(commands.Cog):
 
             # ---------- paging ----------
             self.main_candidates = players[:20]
-            self.sub_candidates = players[20:40]
+            self.sub_candidates = players[20:]   # vše zbylé
 
-            # build first page
             self._build_main_select()
             self._build_next_button()
 
-        # ------------- UI builders -------------
+        # ------------- builders -------------
         def _build_main_select(self):
             opts = [discord.SelectOption(label=p) for p in self.main_candidates]
             self.select_main = discord.ui.Select(
@@ -304,7 +303,6 @@ class PowerCommands(commands.Cog):
             await interaction.response.defer()
 
         async def to_subs(self, interaction: Interaction):
-            # Když není druhá stránka (hráčů <21), rovnou finish
             if not self.sub_candidates:
                 return await self.finish(interaction)
 
@@ -316,7 +314,7 @@ class PowerCommands(commands.Cog):
                 if p not in self.selected_main
             ]
             self.select_subs = discord.ui.Select(
-                placeholder="Pick additional players (optional, max 20)",
+                placeholder="Pick additional players (optional)",
                 min_values=0,
                 max_values=min(20, len(opts_sub)),
                 options=opts_sub,
@@ -368,19 +366,16 @@ class PowerCommands(commands.Cog):
                 attackers = ranked.head(2)
                 remaining = ranked.iloc[2:].reset_index(drop=True)
 
-                # seed teams: one member each
                 teams = [
                     {"members": [row["player"]], "power": row["total"]}
                     for _, row in remaining.head(self.teams).iterrows()
                 ]
-                # distribute rest to balance
                 remaining = remaining.iloc[self.teams :].reset_index(drop=True)
                 for _, row in remaining.iterrows():
                     weakest = min(teams, key=lambda t: t["power"])
                     weakest["members"].append(row["player"])
                     weakest["power"] += row["total"]
 
-                # ---------- output ----------
                 lines: list[str] = []
                 atk_line = ", ".join(
                     f"{row['player']} ({row['total']:.2f}M)"
@@ -420,13 +415,10 @@ class PowerCommands(commands.Cog):
             "Select main players:", view=view, ephemeral=True
         )
 
-    # ------------------------------------------------------------------ powererase (modal)
+    # ------------------------------------------------------------- powererase (modal)
     class PowerEraseModal(Modal, title="Erase power data"):
         player = TextInput(
-            label="Player name",
-            placeholder="exact name",
-            style=TextStyle.short,
-            required=True,
+            label="Player name", placeholder="exact name", style=TextStyle.short, required=True
         )
         scope = TextInput(
             label="Delete 'last' or 'all'",
@@ -464,7 +456,7 @@ class PowerCommands(commands.Cog):
                     df = df.drop(idx)
 
                 await loop.run_in_executor(None, lambda: df.to_csv(POWER_FILE, index=False))
-                save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Erase {scope} for {player_name}")
+                save_to_github(POWER_FILE, POWER_FILE, f"Erase {scope} for {player_name}")
 
                 await interaction.followup.send(
                     f"🗑 Deleted {before - len(df)} record(s) for **{player_name}**.",
@@ -479,7 +471,7 @@ class PowerCommands(commands.Cog):
     async def powererase(self, interaction: Interaction):
         await interaction.response.send_modal(self.PowerEraseModal(self.bot))
 
-    # ------------------------------------------------------------------ powerlist
+    # ------------------------------------------------------------- powerlist
     @app_commands.command(
         name="powerlist",
         description="List all power records for a player (with option to delete)",
