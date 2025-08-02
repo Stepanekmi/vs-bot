@@ -15,7 +15,7 @@ from github_sync import save_to_github
 # ---------- config ----------
 GUILD_ID = 1231529219029340234
 GUILD = discord.Object(id=GUILD_ID)
-POWER_FILE = "data/power_data.csv"        # sjednocená cesta
+POWER_FILE = "power_data.csv"        # sjednocená cesta
 
 # vytvoř složku data/ a prázdné CSV při prvním startu
 os.makedirs("data", exist_ok=True)
