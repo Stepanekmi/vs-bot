@@ -15,7 +15,12 @@ from github_sync import save_to_github
 # ---------- config ----------
 GUILD_ID = 1231529219029340234
 GUILD = discord.Object(id=GUILD_ID)
-POWER_FILE = "power_data.csv"              # zpět do kořene projektu
+POWER_FILE = "data/power_data.csv"        # sjednocená cesta
+
+# vytvoř složku data/ a prázdné CSV při prvním startu
+os.makedirs("data", exist_ok=True)
+if not os.path.exists(POWER_FILE):
+    pd.DataFrame(columns=["player", "tank", "rocket", "air", "timestamp"]).to_csv(POWER_FILE, index=False)
 
 # ---------- util ----------
 logging.basicConfig(level=logging.INFO)
@@ -74,7 +79,7 @@ class PowerCommands(commands.Cog):
 
         df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
         df.to_csv(POWER_FILE, index=False)
-        save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Power data for {player}")
+        save_to_github(POWER_FILE, POWER_FILE, f"Power data for {player}")
 
         msg = (
             f"✅ Data saved for **{player}**:\n"
@@ -157,7 +162,7 @@ class PowerCommands(commands.Cog):
         sorted_max = df_last.sort_values("max_team", ascending=False)
         sorted_total = df_last.sort_values("total", ascending=False)
 
-        msg = "**🥇 By single‑team strength**\n" + "\n".join(
+        msg = "**🥇 By single-team strength**\n" + "\n".join(
             f"{i+1}. {r['player']} – {r['max_team']:.2f}M" for i, r in sorted_max.iterrows()
         )
         msg += "\n\n**🏆 By total strength**\n" + "\n".join(
@@ -179,7 +184,7 @@ class PowerCommands(commands.Cog):
         sorted_max = df_last.sort_values("max_team", ascending=False)
         sorted_total = df_last.sort_values("total", ascending=False)
 
-        msg = "**🥇 By single‑team strength (incl. team4)**\n" + "\n".join(
+        msg = "**🥇 By single-team strength (incl. team4)**\n" + "\n".join(
             f"{i+1}. {r['player']} – {r['max_team']:.2f}M" for i, r in sorted_max.iterrows()
         )
         msg += "\n\n**🏆 By total strength (incl. team4)**\n" + "\n".join(
@@ -247,24 +252,22 @@ class PowerCommands(commands.Cog):
 
     # ============================================================= stormsetup
     class PlayerSelectView(discord.ui.View):
-        """Two‑step picker: first up to 20 mains, pak všechny zbylé jako subs."""
+        """Two-step picker: first up to 20 mains, pak všechny zbylé jako subs."""
 
         def __init__(self, bot: commands.Bot, teams: int, players: list[str]):
             super().__init__(timeout=180)
             self.bot = bot
             self.teams = teams
-            self.players = players  # full list
+            self.players = players
             self.selected_main: list[str] = []
             self.selected_subs: list[str] = []
 
-            # ---------- paging ----------
             self.main_candidates = players[:20]
-            self.sub_candidates = players[20:]   # vše zbylé
+            self.sub_candidates = players[20:]   # everything else
 
             self._build_main_select()
             self._build_next_button()
 
-        # ------------- builders -------------
         def _build_main_select(self):
             opts = [discord.SelectOption(label=p) for p in self.main_candidates]
             self.select_main = discord.ui.Select(
@@ -285,7 +288,6 @@ class PowerCommands(commands.Cog):
             next_btn.callback = cb
             self.add_item(next_btn)
 
-        # ------------- helpers -------------
         async def safe_wrap(self, func, interaction: Interaction, *a, **kw):
             try:
                 return await func(interaction, *a, **kw)
@@ -295,7 +297,6 @@ class PowerCommands(commands.Cog):
                     interaction, "⚠️ Něco se pokazilo, zkuste to znovu."
                 )
 
-        # ------------- callbacks -------------
         async def main_selected(self, interaction: Interaction):
             self.selected_main = self.select_main.values
             await interaction.response.defer()
@@ -305,7 +306,6 @@ class PowerCommands(commands.Cog):
                 return await self.finish(interaction)
 
             self.clear_items()
-
             opts_sub = [
                 discord.SelectOption(label=p)
                 for p in self.sub_candidates
@@ -332,7 +332,6 @@ class PowerCommands(commands.Cog):
 
             done.callback = finish_cb
             self.add_item(done)
-
             await interaction.response.edit_message(view=self)
 
         async def finish(self, interaction: Interaction):
@@ -352,9 +351,7 @@ class PowerCommands(commands.Cog):
                     if c not in df_last.columns:
                         df_last[c] = 0.0
                 df_last["total"] = df_last[["tank", "rocket", "air"]].sum(axis=1)
-                ranked = df_last.sort_values("total", ascending=False).reset_index(
-                    drop=True
-                )
+                ranked = df_last.sort_values("total", ascending=False).reset_index(drop=True)
 
                 if len(ranked) < 2 + self.teams:
                     return await interaction.followup.send(
@@ -454,7 +451,7 @@ class PowerCommands(commands.Cog):
                     df = df.drop(idx)
 
                 await loop.run_in_executor(None, lambda: df.to_csv(POWER_FILE, index=False))
-                save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Erase {scope} for {player_name}")
+                save_to_github(POWER_FILE, POWER_FILE, f"Erase {scope} for {player_name}")
 
                 await interaction.followup.send(
                     f"🗑 Deleted {before - len(df)} record(s) for **{player_name}**.",
