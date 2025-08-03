@@ -41,16 +41,16 @@ from keepalive import app
 APPLICATION_ID = 1371568333333332118
 GUILD_ID       = 1231529219029340234
 
-# FAIL-FAST načtení tokenu z prostředí
+# Fail-fast načtení tokenu z prostředí (teď přesně to, co máš v Renderu)
 try:
-    TOKEN = os.environ["DISCORD_TOKEN"]
+    TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 except KeyError:
-    print("❌ ERROR: env var DISCORD_TOKEN not set! Exiting.")
+    print("❌ ERROR: env var DISCORD_BOT_TOKEN not set! Exiting.")
     sys.exit(1)
 
 # Debug: vypiš, co je v prostředí
 print("🔑 Available env vars:", sorted(os.environ.keys()))
-print("🔑 DISCORD_TOKEN =", repr(TOKEN))
+print("🔑 DISCORD_BOT_TOKEN =", repr(TOKEN))
 
 intents = discord.Intents.default()
 intents.message_content = True
