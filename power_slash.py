@@ -1,10 +1,11 @@
 import discord
 from discord.ext import commands
 from github_sync import save_power_data
+from typing import Optional
 
 async def setup_power_commands(bot: commands.Bot):
     # Power Commands
-    
+
     @bot.tree.command(
         name="powerenter",
         description="Enter power data: player tank rocket air [team4]"
@@ -16,12 +17,19 @@ async def setup_power_commands(bot: commands.Bot):
         air="Air power value",
         team4="(Optional) Fourth team indicator"
     )
-    async def powerenter(interaction: discord.Interaction, player: str, tank: int, rocket: int, air: int, team4: discord.Option[int] = None):
-        # Defer response
+    async def powerenter(
+        interaction: discord.Interaction,
+        player: str,
+        tank: int,
+        rocket: int,
+        air: int,
+        team4: Optional[int] = None
+    ):
+        # Defer response to handle long-running tasks
         await interaction.response.defer(ephemeral=True)
         # Save data
         save_power_data(user=player, tank=tank, rocket=rocket, air=air, team4=team4)
-        # Send follow-up
+        # Send follow-up message
         await interaction.followup.send("✅ Power data saved.", ephemeral=True)
 
     @bot.tree.command(
@@ -30,7 +38,6 @@ async def setup_power_commands(bot: commands.Bot):
     )
     async def powertopplayer(interaction: discord.Interaction):
         await interaction.response.defer()
-        # Implementation to retrieve and display rankings for 3 teams
         rankings = get_top_players(teams=3)
         await interaction.followup.send(rankings)
 
@@ -72,7 +79,12 @@ async def setup_power_commands(bot: commands.Bot):
         player2="Second player name",
         team="Team number to compare"
     )
-    async def powerplayervsplayer(interaction: discord.Interaction, player1: str, player2: str, team: int):
+    async def powerplayervsplayer(
+        interaction: discord.Interaction,
+        player1: str,
+        player2: str,
+        team: int
+    ):
         await interaction.response.defer()
         comparison = compare_players(player1, player2, team)
         await interaction.followup.send(comparison)
@@ -92,7 +104,7 @@ async def setup_power_commands(bot: commands.Bot):
         description="Show help message for power commands"
     )
     async def info(interaction: discord.Interaction):
-        # This can be immediate since it's lightweight
+        # Immediate response
         help_text = (
             "/powerenter player tank rocket air [team4] – enter power data\n"
             "/powertopplayer – show all power rankings (3 teams)\n"
