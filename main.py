@@ -1,6 +1,7 @@
 import os
 import requests
-import time  # for back‑off
+import time  # for back-off
+import sys
 
 # Diagnostic prints
 print("👀 RUNNING UPDATED MAIN.PY")
@@ -39,7 +40,17 @@ from keepalive import app
 # Discord IDs
 APPLICATION_ID = 1371568333333332118
 GUILD_ID       = 1231529219029340234
-TOKEN          = os.getenv("DISCORD_TOKEN")
+
+# FAIL-FAST načtení tokenu z prostředí
+try:
+    TOKEN = os.environ["DISCORD_TOKEN"]
+except KeyError:
+    print("❌ ERROR: env var DISCORD_TOKEN not set! Exiting.")
+    sys.exit(1)
+
+# Debug: vypiš, co je v prostředí
+print("🔑 Available env vars:", sorted(os.environ.keys()))
+print("🔑 DISCORD_TOKEN =", repr(TOKEN))
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -73,7 +84,6 @@ threading.Thread(
     target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
 ).start()
 
-
 print("🔑 Starting bot…")
 attempt = 0
 MAX_SLEEP = 600  # 10 min
@@ -85,7 +95,7 @@ while True:
     except discord.errors.HTTPException as e:
         if e.status == 429:
             wait = min(2 ** attempt, MAX_SLEEP)
-            print(f"⚠️ 429 rate‑limit, retry in {wait}s (attempt {attempt+1})")
+            print(f"⚠️ 429 rate-limit, retry in {wait}s (attempt {attempt+1})")
             time.sleep(wait)
             attempt += 1
             continue
