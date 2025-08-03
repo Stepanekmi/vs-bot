@@ -3,19 +3,35 @@ from discord.ext import commands
 from github_sync import save_power_data
 from typing import Optional
 
-# NOTE: Implement or import the following helper functions in this module:
-# get_top_players, erase_power_records, list_power_entries, compare_players, setup_storm
+# Pomocné funkce – doplň vlastní logiku
+def get_top_players(teams: int) -> str:
+    return f"Žebříček pro {teams} týmy"
+
+def erase_power_records(mode: str) -> int:
+    return 1
+
+def list_power_entries(player: str) -> str:
+    return f"Záznamy pro {player}: ..."
+
+def compare_players(p1: str, p2: str, team: int) -> str:
+    return f"Srovnání {p1} vs {p2} v týmu {team}"
+
+def setup_storm(teams: int) -> str:
+    return f"Storm setup pro {teams} týmy"
 
 async def setup_power_commands(bot: commands.Bot):
-    print("🔧 [DEBUG] setup_power_commands called")
+    print("🔧 [DEBUG] setup_power_commands volá se")
 
-    @bot.tree.command(name="powerenter", description="Enter power data: player tank rocket air [team4]")
+    @bot.tree.command(
+        name="powerenter",
+        description="Uložit power data: player tank rocket air [team4]"
+    )
     @discord.app_commands.describe(
-        player="Name of the player",
-        tank="Tank power value",
-        rocket="Rocket power value",
-        air="Air power value",
-        team4="(Optional) Fourth team indicator"
+        player="Jméno hráče",
+        tank="Hodnota tank power",
+        rocket="Hodnota rocket power",
+        air="Hodnota air power",
+        team4="(volitelné) indikátor 4. týmu"
     )
     async def powerenter(
         interaction: discord.Interaction,
@@ -26,63 +42,77 @@ async def setup_power_commands(bot: commands.Bot):
         team4: Optional[int] = None
     ):
         await interaction.response.defer(ephemeral=True)
-        save_power_data(f"Power data: {player},{tank},{rocket},{air},{team4}")
-        await interaction.followup.send("✅ Power data saved.", ephemeral=True)
+        save_power_data(user=player, tank=tank, rocket=rocket, air=air, team4=team4)
+        await interaction.followup.send("✅ Power data uložena.", ephemeral=True)
 
-    @bot.tree.command(name="powertopplayer", description="Show all power rankings (3 teams)")
+    @bot.tree.command(
+        name="powertopplayer",
+        description="Ukázat žebříček (3 týmy)"
+    )
     async def powertopplayer(interaction: discord.Interaction):
         await interaction.response.defer()
-        rankings = get_top_players(teams=3)
-        await interaction.followup.send(rankings)
+        await interaction.followup.send(get_top_players(3))
 
-    @bot.tree.command(name="powertopplayer4", description="Show all power rankings (incl. optional 4th team)")
+    @bot.tree.command(
+        name="powertopplayer4",
+        description="Ukázat žebříček (včetně 4. týmu)"
+    )
     async def powertopplayer4(interaction: discord.Interaction):
         await interaction.response.defer()
-        rankings = get_top_players(teams=4)
-        await interaction.followup.send(rankings)
+        await interaction.followup.send(get_top_players(4))
 
-    @bot.tree.command(name="powererase", description="Erase power records (last / all)")
-    @discord.app_commands.describe(option="'last' to erase last entry or 'all' to clear all")
+    @bot.tree.command(
+        name="powererase",
+        description="Vymazat power záznamy (last|all)"
+    )
+    @discord.app_commands.describe(option="'last' nebo 'all'")
     async def powererase(interaction: discord.Interaction, option: str):
         await interaction.response.defer(ephemeral=True)
-        count = erase_power_records(mode=option)
-        await interaction.followup.send(f"✅ Erased {count} records.", ephemeral=True)
+        count = erase_power_records(option)
+        await interaction.followup.send(f"✅ Vymazáno {count} záznamů.", ephemeral=True)
 
-    @bot.tree.command(name="powerlist", description="List & optionally delete power entries for a player")
-    @discord.app_commands.describe(player="Name of the player")
+    @bot.tree.command(
+        name="powerlist",
+        description="Vypsat (a případně smazat) záznamy hráče"
+    )
     async def powerlist(interaction: discord.Interaction, player: str):
         await interaction.response.defer()
-        entries = list_power_entries(player)
-        await interaction.followup.send(entries)
+        await interaction.followup.send(list_power_entries(player))
 
-    @bot.tree.command(name="powerplayervsplayer", description="Compare two players by selected team")
-    @discord.app_commands.describe(
-        player1="First player name",
-        player2="Second player name",
-        team="Team number to compare"
+    @bot.tree.command(
+        name="powerplayervsplayer",
+        description="Porovnání dvou hráčů podle týmu"
     )
-    async def powerplayervsplayer(interaction: discord.Interaction, player1: str, player2: str, team: int):
+    async def powerplayervsplayer(
+        interaction: discord.Interaction,
+        player1: str,
+        player2: str,
+        team: int
+    ):
         await interaction.response.defer()
-        comparison = compare_players(player1, player2, team)
-        await interaction.followup.send(comparison)
+        await interaction.followup.send(compare_players(player1, player2, team))
 
-    @bot.tree.command(name="stormsetup", description="Create balanced storm teams")
-    @discord.app_commands.describe(teams="Number of teams to split into")
+    @bot.tree.command(
+        name="stormsetup",
+        description="Vytvořit vyvážené storm týmy"
+    )
     async def stormsetup(interaction: discord.Interaction, teams: int):
         await interaction.response.defer()
-        result = setup_storm(teams)
-        await interaction.followup.send(result)
+        await interaction.followup.send(setup_storm(teams))
 
-    @bot.tree.command(name="info", description="Show help message for power commands")
+    @bot.tree.command(
+        name="info",
+        description="Zobrazit nápovědu k Power příkazům"
+    )
     async def info(interaction: discord.Interaction):
         help_text = (
-            "/powerenter player tank rocket air [team4] – enter power data\n"
-            "/powertopplayer – show all power rankings (3 teams)\n"
-            "/powertopplayer4 – show all power rankings (incl. optional 4th team)\n"
-            "/powererase option – erase power records (last / all)\n"
-            "/powerlist player – list & optionally delete power entries\n"
-            "/powerplayervsplayer player1 player2 team – compare two players by selected team\n"
-            "/stormsetup teams:<#> – create balanced storm teams\n"
-            "/info – show this help message"
+            "/powerenter player tank rocket air [team4]\\n"
+            "/powertopplayer\\n"
+            "/powertopplayer4\\n"
+            "/powererase <last|all>\\n"
+            "/powerlist <player>\\n"
+            "/powerplayervsplayer <p1> <p2> <team>\\n"
+            "/stormsetup <teams>\\n"
+            "/info"
         )
         await interaction.response.send_message(help_text, ephemeral=True)

@@ -1,8 +1,8 @@
 import os
-import requests
-import time
 import sys
+import time
 import threading
+import requests
 
 import discord
 from discord.ext import commands
@@ -12,49 +12,45 @@ from vs_slash import setup_vs_commands
 from vs_text_listener import setup_vs_text_listener
 from keepalive import app
 
-# Diagnostic prints
-print("👀 RUNNING MAIN.PY")
-print("🔍 discord.py version:", discord.__version__)
+# Diagnostika
+print("👀 SPUŠTĚN main.py")
+print("🔍 discord.py verze:", discord.__version__)
 
-# Fetch persisted data from GitHub
-github_owner = os.getenv("GH_OWNER")
-github_repo = os.getenv("GH_REPO")
-BRANCH = "main"
+# Konfigurace GitHub repa
+GH_OWNER    = os.getenv("GH_OWNER")
+GH_REPO     = os.getenv("GH_REPO")
+BRANCH      = "main"
+GITHUB_REPO = f"{GH_OWNER}/{GH_REPO}"
 
-GITHUB_REPO = f"{github_owner}/{github_repo}"
-
-def fetch_file(repo_path: str, local_path: str):
+# Funkce pro načtení souborů z GitHubu
+def fetch_file(repo_path, local_path):
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{BRANCH}/{repo_path}"
     try:
         r = requests.get(url)
-        if r.status_code == 200:
-            with open(local_path, "wb") as f:
-                f.write(r.content)
-            print(f"✅ Fetched {repo_path}")
-        else:
-            print(f"⚠️ Failed to fetch {repo_path}: HTTP {r.status_code}")
+        r.raise_for_status()
+        with open(local_path, "wb") as f:
+            f.write(r.content)
+        print(f"✅ Staženo {repo_path}")
     except Exception as e:
-        print(f"❌ Exception fetching {repo_path}: {e}")
+        print(f"⚠️ Chyba při stahování {repo_path}: {e}")
 
-# Ensure data files exist
-fetch_file("data/vs_data.csv", "vs_data.csv")
-fetch_file("data/power_data.csv", "power_data.csv")
-fetch_file("data/r4_list.txt", "r4_list.txt")
+# Načti CSV na startu
+for path in ["data/vs_data.csv", "data/power_data.csv", "data/r4_list.txt"]:
+    fetch_file(path, path.split("/")[-1])
 
-# Load Discord token
+# Načtení tokenů a ID
 try:
-    TOKEN = os.environ["DISCORD_BOT_TOKEN"]
-except KeyError:
-    print("❌ ERROR: DISCORD_BOT_TOKEN not set! Exiting.")
+    DISCORD_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
+    GH_TOKEN      = os.environ["GH_TOKEN"]
+except KeyError as e:
+    print(f"❌ Chybí proměnná {e.args[0]}, končím.")
     sys.exit(1)
 
-print("🔑 Discord token loaded.")
+APPLICATION_ID = int(os.getenv("APPLICATION_ID", 1371568333333332118))
+GUILD_ID       = int(os.getenv("GUILD_ID",       1231529219029340234))
 
 intents = discord.Intents.default()
 intents.message_content = True
-
-APPLICATION_ID = int(os.getenv("APPLICATION_ID", 1371568333333332118))
-GUILD_ID = int(os.getenv("GUILD_ID", 1231529219029340234))
 
 class MyBot(commands.Bot):
     def __init__(self):
@@ -70,30 +66,31 @@ class MyBot(commands.Bot):
         await setup_vs_commands(self)
         setup_vs_text_listener(self)
         synced = await self.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"✅ Slash commands synced for GUILD_ID {GUILD_ID}: {len(synced)}")
+        print(f"✅ Slash příkazy zaregistrovány pro GUILD_ID {GUILD_ID}: {len(synced)} příkazů")
 
 bot = MyBot()
 
 @bot.event
 async def on_ready():
-    print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"🔓 Přihlášen jako {bot.user} (ID: {bot.user.id})")
 
 # Keepalive server
 threading.Thread(
-    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT",5000))),
+    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000))),
     daemon=True
 ).start()
 
-print("🔑 Starting bot…")
+print("🔑 Spouštím bota…")
 
+# Spouštění s retry při rate-limitu
 while True:
     try:
-        bot.run(TOKEN)
+        bot.run(DISCORD_TOKEN)
         break
     except discord.errors.HTTPException as e:
         if e.status == 429:
-            wait = min(2 ** 0, 600)
-            print(f"⚠️ Rate limited, retry in {wait}s")
-            time.sleep(wait)
-            continue
-        raise
+            delay = 60
+            print(f"⚠️ Rate limited, čekám {delay}s…")
+            time.sleep(delay)
+        else:
+            raise
