@@ -1,6 +1,5 @@
 import os
 import requests
-import time  # for back‑off
 
 # Diagnostic prints
 print("👀 RUNNING UPDATED MAIN.PY")
@@ -73,20 +72,5 @@ threading.Thread(
     target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
 ).start()
 
-
 print("🔑 Starting bot…")
-attempt = 0
-MAX_SLEEP = 600  # 10 min
-while True:
-    try:
-        bot.run(TOKEN)
-        attempt = 0  # reset if bot exits cleanly later
-        break
-    except discord.errors.HTTPException as e:
-        if e.status == 429:
-            wait = min(2 ** attempt, MAX_SLEEP)
-            print(f"⚠️ 429 rate‑limit, retry in {wait}s (attempt {attempt+1})")
-            time.sleep(wait)
-            attempt += 1
-            continue
-        raise
+bot.run(TOKEN)
