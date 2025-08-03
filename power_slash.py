@@ -173,3 +173,9 @@ class PowerCommands(commands.Cog):
 
         def __init__(self, bot: commands.Bot, teams: int, players: list[str]):
             super().__init__(timeout=180)
+
+# ------------------------------------------------------ export
+async def setup_power_commands(bot: commands.Bot):
+    """Importovaná v main.py → přidá PowerCommands jako cog."""
+    await bot.add_cog(PowerCommands(bot))
+
