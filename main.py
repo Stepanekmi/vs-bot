@@ -16,13 +16,13 @@ from keepalive import app
 print("👀 SPUŠTĚN main.py")
 print("🔍 discord.py verze:", discord.__version__)
 
-# Konfigurace GitHub repa
+# Konfigurace GitHub repozitáře
 GH_OWNER    = os.getenv("GH_OWNER")
 GH_REPO     = os.getenv("GH_REPO")
 BRANCH      = "main"
 GITHUB_REPO = f"{GH_OWNER}/{GH_REPO}"
 
-# Funkce pro načtení souborů z GitHubu
+# Funkce pro stažení dat
 def fetch_file(repo_path, local_path):
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{BRANCH}/{repo_path}"
     try:
@@ -34,31 +34,30 @@ def fetch_file(repo_path, local_path):
     except Exception as e:
         print(f"⚠️ Chyba při stahování {repo_path}: {e}")
 
-# Načti CSV na startu
-for path in ["data/vs_data.csv", "data/power_data.csv", "data/r4_list.txt"]:
-    fetch_file(path, path.split("/")[-1])
+# Načti CSV/text soubory před startem bota
+def preload_data():
+    for path in ["data/vs_data.csv", "data/power_data.csv", "data/r4_list.txt"]:
+        fetch_file(path, path.split('/')[-1])
+
+preload_data()
 
 # Načtení tokenů a ID
 try:
     DISCORD_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
     GH_TOKEN      = os.environ["GH_TOKEN"]
 except KeyError as e:
-    print(f"❌ Chybí proměnná {e.args[0]}, končím.")
+    print(f"❌ Chybí proměnná {e.args[0]}, ukončuji.")
     sys.exit(1)
 
-APPLICATION_ID = int(os.getenv("APPLICATION_ID", 1371568333333332118))
-GUILD_ID       = int(os.getenv("GUILD_ID",       1231529219029340234))
+APPLICATION_ID = int(os.getenv("APPLICATION_ID", "1371568333333332118"))
+GUILD_ID       = int(os.getenv("GUILD_ID",       "1231529219029340234"))
 
 intents = discord.Intents.default()
 intents.message_content = True
 
 class MyBot(commands.Bot):
     def __init__(self):
-        super().__init__(
-            command_prefix="!",
-            intents=intents,
-            application_id=APPLICATION_ID
-        )
+        super().__init__(command_prefix="!", intents=intents, application_id=APPLICATION_ID)
 
     async def setup_hook(self):
         print("⚙️ setup_hook spuštěn…")
@@ -74,15 +73,15 @@ bot = MyBot()
 async def on_ready():
     print(f"🔓 Přihlášen jako {bot.user} (ID: {bot.user.id})")
 
-# Keepalive server
+# Keepalive server pro UptimeRobot
 threading.Thread(
-    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000))),
+    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000"))),
     daemon=True
 ).start()
 
 print("🔑 Spouštím bota…")
 
-# Spouštění s retry při rate-limitu
+# Spuštění s retry při rate-limitu
 while True:
     try:
         bot.run(DISCORD_TOKEN)
