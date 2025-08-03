@@ -138,3 +138,9 @@ class PowerCommands(commands.Cog):
             self.clear_items(); subs=[p for p in self.sub_candidates if p not in self.selected_main]
             self.add_item(self._mk_select(subs,"Pick additional players",self.sub_sel))
             done=discord.ui.Button(label="Done",style=discord.ButtonStyle.success); done.callback=self.finish; self.add
+
+# ------------------ export ------------------
+async def setup_power_commands(bot: commands.Bot):
+    """Importováno v main.py – zaregistruje PowerCommands jako cog."""
+    await bot.add_cog(PowerCommands(bot))
+
