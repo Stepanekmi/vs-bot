@@ -1,105 +1,106 @@
-import os
-import io
-import logging
-from datetime import datetime
-
-import pandas as pd
-import matplotlib.pyplot as plt
 import discord
-from discord import app_commands, Interaction, TextStyle
 from discord.ext import commands
-from discord.ui import Modal, TextInput
-
-from github_sync import save_to_github
-
-# ---------- config ----------
-GUILD_ID = 1231529219029340234
-GUILD = discord.Object(id=GUILD_ID)
-POWER_FILE = "power_data.csv"          # pracovní soubor v kořeni
-
-# vytvoř prázdný CSV při prvním startu
-if not os.path.exists(POWER_FILE):
-    pd.DataFrame(columns=["player", "tank", "rocket", "air", "timestamp"]).to_csv(POWER_FILE, index=False)
-
-logging.basicConfig(level=logging.INFO)
-
-
-def normalize(v: str) -> float:
-    try:
-        return round(float(v.strip().upper().rstrip("M")), 2)
-    except Exception:
-        return 0.0
-
-
-class PowerCommands(commands.Cog):
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    # ------------------------------------------------ powerenter
-    @app_commands.command(name="powerenter", description="Enter your team strengths")
-    @app_commands.guilds(GUILD)
-    async def powerenter(
-        self,
-        interaction: Interaction,
-        player: str,
-        tank: str,
-        rocket: str,
-        air: str,
-        team4: str | None = None,
-    ):
-        df = pd.read_csv(POWER_FILE)
-        new = {
-            "player": player,
-            "tank": normalize(tank),
-            "rocket": normalize(rocket),
-            "air": normalize(air),
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-        if team4:
-            new["team4"] = normalize(team4)
-
-        df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
-        df.to_csv(POWER_FILE, index=False)
-
-        # -------- správná cesta do repozitáře
-        save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Power data for {player}")
-
-        await interaction.response.send_message("✅ Data saved.", ephemeral=True)
-
-    # ------------- další příkazy (beze změn) -------------
-
-    # ------------------------------------------------ powererase (uvnitř modal callback)
-    class PowerEraseModal(Modal, title="Erase data"):
-        player = TextInput(label="Player")
-        scope = TextInput(label="last / all")
-
-        async def callback(self, interaction: Interaction):
-            await interaction.response.defer(thinking=True, ephemeral=True)
-            player_name = self.player.value.strip()
-            scope = self.scope.value.strip().lower()
-
-            import asyncio
-
-            loop = asyncio.get_running_loop()
-            df = await loop.run_in_executor(None, pd.read_csv, POWER_FILE)
-
-            if player_name not in df["player"].values:
-                return await interaction.followup.send("Player not found.", ephemeral=True)
-
-            if scope == "all":
-                df = df[df["player"] != player_name]
-            else:
-                df = df.sort_values("timestamp")
-                idx = df[df["player"] == player_name].index[-1]
-                df = df.drop(idx)
-
-            await loop.run_in_executor(None, lambda: df.to_csv(POWER_FILE, index=False))
-
-            # -------- commit s opravenou cestou
-            save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Erase {scope} for {player_name}")
-
-            await interaction.followup.send("🗑 Done.", ephemeral=True)
-
+from github_sync import save_power_data
 
 async def setup_power_commands(bot: commands.Bot):
-    await bot.add_cog(PowerCommands(bot))
+    # Power Commands
+    
+    @bot.tree.command(
+        name="powerenter",
+        description="Enter power data: player tank rocket air [team4]"
+    )
+    @discord.app_commands.describe(
+        player="Name of the player",
+        tank="Tank power value",
+        rocket="Rocket power value",
+        air="Air power value",
+        team4="(Optional) Fourth team indicator"
+    )
+    async def powerenter(interaction: discord.Interaction, player: str, tank: int, rocket: int, air: int, team4: discord.Option[int] = None):
+        # Defer response
+        await interaction.response.defer(ephemeral=True)
+        # Save data
+        save_power_data(user=player, tank=tank, rocket=rocket, air=air, team4=team4)
+        # Send follow-up
+        await interaction.followup.send("✅ Power data saved.", ephemeral=True)
+
+    @bot.tree.command(
+        name="powertopplayer",
+        description="Show all power rankings (3 teams)"
+    )
+    async def powertopplayer(interaction: discord.Interaction):
+        await interaction.response.defer()
+        # Implementation to retrieve and display rankings for 3 teams
+        rankings = get_top_players(teams=3)
+        await interaction.followup.send(rankings)
+
+    @bot.tree.command(
+        name="powertopplayer4",
+        description="Show all power rankings (incl. optional 4th team)"
+    )
+    async def powertopplayer4(interaction: discord.Interaction):
+        await interaction.response.defer()
+        rankings = get_top_players(teams=4)
+        await interaction.followup.send(rankings)
+
+    @bot.tree.command(
+        name="powererase",
+        description="Erase power records (last / all)"
+    )
+    @discord.app_commands.describe(option="'last' to erase last entry or 'all' to clear all")
+    async def powererase(interaction: discord.Interaction, option: str):
+        await interaction.response.defer(ephemeral=True)
+        count = erase_power_records(mode=option)
+        await interaction.followup.send(f"✅ Erased {count} records.", ephemeral=True)
+
+    @bot.tree.command(
+        name="powerlist",
+        description="List & optionally delete power entries for a player"
+    )
+    @discord.app_commands.describe(player="Name of the player")
+    async def powerlist(interaction: discord.Interaction, player: str):
+        await interaction.response.defer()
+        entries = list_power_entries(player)
+        await interaction.followup.send(entries)
+
+    @bot.tree.command(
+        name="powerplayervsplayer",
+        description="Compare two players by selected team"
+    )
+    @discord.app_commands.describe(
+        player1="First player name",
+        player2="Second player name",
+        team="Team number to compare"
+    )
+    async def powerplayervsplayer(interaction: discord.Interaction, player1: str, player2: str, team: int):
+        await interaction.response.defer()
+        comparison = compare_players(player1, player2, team)
+        await interaction.followup.send(comparison)
+
+    @bot.tree.command(
+        name="stormsetup",
+        description="Create balanced storm teams"
+    )
+    @discord.app_commands.describe(teams="Number of teams to split into")
+    async def stormsetup(interaction: discord.Interaction, teams: int):
+        await interaction.response.defer()
+        result = setup_storm(teams)
+        await interaction.followup.send(result)
+
+    @bot.tree.command(
+        name="info",
+        description="Show help message for power commands"
+    )
+    async def info(interaction: discord.Interaction):
+        # This can be immediate since it's lightweight
+        help_text = (
+            "/powerenter player tank rocket air [team4] – enter power data\n"
+            "/powertopplayer – show all power rankings (3 teams)\n"
+            "/powertopplayer4 – show all power rankings (incl. optional 4th team)\n"
+            "/powererase option – erase power records (last / all)\n"
+            "/powerlist player – list & optionally delete power entries\n"
+            "/powerplayervsplayer player1 player2 team – compare two players by selected team\n"
+            "/stormsetup teams:<#> – create balanced storm teams\n"
+            "/info – show this help message"
+        )
+        await interaction.response.send_message(help_text, ephemeral=True)
