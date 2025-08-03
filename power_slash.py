@@ -3,7 +3,8 @@ from discord.ext import commands
 from github_sync import save_power_data
 from typing import Optional
 
-# --- Pomocné funkce, doplň vlastní logiku ---
+# Pomocné stuby – doplň vlastní logiku
+
 def get_top_players(teams: int) -> str:
     return f"Žebříček pro {teams} týmy"
 
@@ -11,10 +12,10 @@ def erase_power_records(mode: str) -> int:
     return 1
 
 def list_power_entries(player: str) -> str:
-    return f"Záznamy pro {player}: ..."
+    return f"Záznamy pro {player}"
 
 def compare_players(p1: str, p2: str, team: int) -> str:
-    return f"Srovnání {p1} vs {p2} (team {team})"
+    return f"{p1} vs {p2} (team {team})"
 
 def setup_storm(teams: int) -> str:
     return f"Storm setup pro {teams} týmy"
@@ -22,16 +23,13 @@ def setup_storm(teams: int) -> str:
 async def setup_power_commands(bot: commands.Bot):
     print("🔧 [DEBUG] setup_power_commands volá se")
 
-    @bot.tree.command(
-        name="powerenter",
-        description="Uložit power data: player tank rocket air [team4]"
-    )
+    @bot.tree.command(name="powerenter", description="Uložit power data: player tank rocket air [team4]")
     @discord.app_commands.describe(
         player="Jméno hráče",
         tank="Tank power hodnota",
         rocket="Rocket power hodnota",
         air="Air power hodnota",
-        team4="(volitelné) čtvrtý tým"
+        team4="(volitelně) 4. tým"
     )
     async def powerenter(
         interaction: discord.Interaction,
@@ -50,7 +48,7 @@ async def setup_power_commands(bot: commands.Bot):
         await interaction.response.defer()
         await interaction.followup.send(get_top_players(3))
 
-    @bot.tree.command(name="powertopplayer4", description="Žebříček (včetně 4. týmu)")
+    @bot.tree.command(name="powertopplayer4", description="Žebříček (4 týmy)")
     async def powertopplayer4(interaction: discord.Interaction):
         await interaction.response.defer()
         await interaction.followup.send(get_top_players(4))
@@ -67,7 +65,7 @@ async def setup_power_commands(bot: commands.Bot):
         await interaction.response.defer()
         await interaction.followup.send(list_power_entries(player))
 
-    @bot.tree.command(name="powerplayervsplayer", description="Porovnání dvou hráčů podle týmu")
+    @bot.tree.command(name="powerplayervsplayer", description="Porovnání hráčů")
     async def powerplayervsplayer(
         interaction: discord.Interaction,
         player1: str,
