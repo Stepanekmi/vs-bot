@@ -150,4 +150,5 @@ class PowerCommands(commands.Cog):
     class PlayerSelectView(discord.ui.View):
         """Interaktivní dvoukrokový picker hráčů."""
         def __init__(self, bot: commands.Bot, teams: int, players: list[str]):
-            super().__init__(timeout
+            super().__init__(timeout=180)
+
