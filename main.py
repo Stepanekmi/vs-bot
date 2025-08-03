@@ -1,89 +1,92 @@
 import os
-import sys
-import time
-import threading
 import requests
+import time  # for back‑off
 
+# Diagnostic prints
+print("👀 RUNNING UPDATED MAIN.PY")
 import discord
-from discord.ext import commands
+print("🔍 discord.py version:", discord.__version__)
 
-from power_slash import setup_power_commands
-from vs_slash import setup_vs_commands
-from vs_text_listener import setup_vs_text_listener
-from keepalive import app
+# Fetch persisted data from GitHub
+GITHUB_REPO = "Stepanekmi/vs-data-store"
+BRANCH = "main"
 
-# Diagnostika
-print("👀 SPUŠTĚN main.py")
-print("🔍 discord.py verze:", discord.__version__)
-
-# GitHub konfigurace
-github_owner = os.getenv("GH_OWNER")
-github_repo  = os.getenv("GH_REPO")
-BRANCH        = "main"
-GITHUB_REPO   = f"{github_owner}/{github_repo}"
-
-# Funkce pro stažení souborů z GitHubu
-def fetch_file(repo_path, local_path):
+def fetch_file(repo_path: str, local_path: str):
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{BRANCH}/{repo_path}"
     try:
         r = requests.get(url)
-        r.raise_for_status()
-        with open(local_path, "wb") as f:
-            f.write(r.content)
-        print(f"✅ Staženo {repo_path}")
+        if r.status_code == 200:
+            with open(local_path, "wb") as f:
+                f.write(r.content)
+            print(f"✅ Fetched {repo_path}")
+        else:
+            print(f"⚠️ Failed to fetch {repo_path}: HTTP {r.status_code}")
     except Exception as e:
-        print(f"⚠️ Chyba při stahování {repo_path}: {e}")
+        print(f"❌ Exception fetching {repo_path}: {e}")
 
-# Načti data před startem bota
-for path in ["data/vs_data.csv", "data/power_data.csv", "data/r4_list.txt"]:
-    fetch_file(path, path.split('/')[-1])
+# Ensure files are loaded before bot starts
+fetch_file("data/vs_data.csv", "vs_data.csv")
+fetch_file("data/power_data.csv", "power_data.csv")
+fetch_file("data/r4_list.txt", "r4_list.txt")
 
-# Načtení tokenů a ID
-try:
-    DISCORD_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
-    GH_TOKEN      = os.environ["GH_TOKEN"]
-except KeyError as e:
-    print(f"❌ Chybí env var {e.args[0]}, končím.")
-    sys.exit(1)
+from discord.ext import commands
+from power_slash import setup_power_commands
+from vs_slash import setup_vs_commands
+from vs_text_listener import setup_vs_text_listener
+import threading
+from keepalive import app
 
-APPLICATION_ID = int(os.getenv("APPLICATION_ID", "1371568333333332118"))
-GUILD_ID       = int(os.getenv("GUILD_ID",       "1231529219029340234"))
+# Discord IDs
+APPLICATION_ID = 1371568333333332118
+GUILD_ID       = 1231529219029340234
+TOKEN          = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
 
 class MyBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents, application_id=APPLICATION_ID)
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            application_id=APPLICATION_ID
+        )
 
     async def setup_hook(self):
         print("⚙️ setup_hook spuštěn…")
         await setup_power_commands(self)
         await setup_vs_commands(self)
         setup_vs_text_listener(self)
-        synced = await self.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"✅ Slash příkazy zaregistrovány: {len(synced)} příkazů")
+        # Sync slash commands to guild
+        await self.tree.sync(guild=discord.Object(id=GUILD_ID))
+        print(f"✅ Slash commands synced for GUILD_ID {GUILD_ID}")
 
 bot = MyBot()
 
 @bot.event
 async def on_ready():
-    print(f"🔓 Přihlášen jako {bot.user} (ID: {bot.user.id})")
+    print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
+    print("------")
 
-# Keepalive pro UptimeRobot
+# Keepalive server for UptimeRobot
 threading.Thread(
-    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000"))),
-    daemon=True
+    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
 ).start()
 
-print("🔑 Spouštím bota…")
+
+print("🔑 Starting bot…")
+attempt = 0
+MAX_SLEEP = 600  # 10 min
 while True:
     try:
-        bot.run(DISCORD_TOKEN)
+        bot.run(TOKEN)
+        attempt = 0  # reset if bot exits cleanly later
         break
     except discord.errors.HTTPException as e:
         if e.status == 429:
-            print("⚠️ Rate limited, čekám 60s…")
-            time.sleep(60)
-        else:
-            raise
+            wait = min(2 ** attempt, MAX_SLEEP)
+            print(f"⚠️ 429 rate‑limit, retry in {wait}s (attempt {attempt+1})")
+            time.sleep(wait)
+            attempt += 1
+            continue
+        raise
