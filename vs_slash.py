@@ -47,17 +47,3 @@ async def setup_vs_commands(bot: commands.Bot):
         await interaction.response.defer()
         top = get_vs_top(tag)
         await interaction.followup.send(top)
-
-    @bot.tree.command(
-        name="info",
-        description="Zobrazit všechny VS příkazy"
-    )
-    async def info(interaction: discord.Interaction):
-        help_text = (
-            "/vs_start <date> <tag>\\n"
-            "/vs_finish\\n"
-            "/vs_stats <player>\\n"
-            "/vs_top <tag>\\n"
-            "/info"
-        )
-        await interaction.response.send_message(help_text, ephemeral=True)
