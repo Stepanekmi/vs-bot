@@ -1,16 +1,27 @@
 import os
 import requests
-import time  # for back-off
+import time
 import sys
+import threading
+
+import discord
+from discord.ext import commands
+
+from power_slash import setup_power_commands
+from vs_slash import setup_vs_commands
+from vs_text_listener import setup_vs_text_listener
+from keepalive import app
 
 # Diagnostic prints
-print("👀 RUNNING UPDATED MAIN.PY")
-import discord
+print("👀 RUNNING MAIN.PY")
 print("🔍 discord.py version:", discord.__version__)
 
 # Fetch persisted data from GitHub
-GITHUB_REPO = "Stepanekmi/vs-data-store"
+github_owner = os.getenv("GH_OWNER")
+github_repo = os.getenv("GH_REPO")
 BRANCH = "main"
+
+GITHUB_REPO = f"{github_owner}/{github_repo}"
 
 def fetch_file(repo_path: str, local_path: str):
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{BRANCH}/{repo_path}"
@@ -25,35 +36,25 @@ def fetch_file(repo_path: str, local_path: str):
     except Exception as e:
         print(f"❌ Exception fetching {repo_path}: {e}")
 
-# Ensure files are loaded before bot starts
+# Ensure data files exist
 fetch_file("data/vs_data.csv", "vs_data.csv")
 fetch_file("data/power_data.csv", "power_data.csv")
 fetch_file("data/r4_list.txt", "r4_list.txt")
 
-from discord.ext import commands
-from power_slash import setup_power_commands
-from vs_slash import setup_vs_commands
-from vs_text_listener import setup_vs_text_listener
-import threading
-from keepalive import app
-
-# Discord IDs
-APPLICATION_ID = 1371568333333332118
-GUILD_ID       = 1231529219029340234
-
-# Fail-fast načtení tokenu z prostředí (teď přesně to, co máš v Renderu)
+# Load Discord token
 try:
     TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 except KeyError:
-    print("❌ ERROR: env var DISCORD_BOT_TOKEN not set! Exiting.")
+    print("❌ ERROR: DISCORD_BOT_TOKEN not set! Exiting.")
     sys.exit(1)
 
-# Debug: vypiš, co je v prostředí
-print("🔑 Available env vars:", sorted(os.environ.keys()))
-print("🔑 DISCORD_BOT_TOKEN =", repr(TOKEN))
+print("🔑 Discord token loaded.")
 
 intents = discord.Intents.default()
 intents.message_content = True
+
+APPLICATION_ID = int(os.getenv("APPLICATION_ID", 1371568333333332118))
+GUILD_ID = int(os.getenv("GUILD_ID", 1231529219029340234))
 
 class MyBot(commands.Bot):
     def __init__(self):
@@ -68,35 +69,31 @@ class MyBot(commands.Bot):
         await setup_power_commands(self)
         await setup_vs_commands(self)
         setup_vs_text_listener(self)
-        # Sync slash commands to guild
-        await self.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"✅ Slash commands synced for GUILD_ID {GUILD_ID}")
+        synced = await self.tree.sync(guild=discord.Object(id=GUILD_ID))
+        print(f"✅ Slash commands synced for GUILD_ID {GUILD_ID}: {len(synced)}")
 
 bot = MyBot()
 
 @bot.event
 async def on_ready():
     print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
-    print("------")
 
-# Keepalive server for UptimeRobot
+# Keepalive server
 threading.Thread(
-    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT",5000))),
+    daemon=True
 ).start()
 
 print("🔑 Starting bot…")
-attempt = 0
-MAX_SLEEP = 600  # 10 min
+
 while True:
     try:
         bot.run(TOKEN)
-        attempt = 0  # reset if bot exits cleanly later
         break
     except discord.errors.HTTPException as e:
         if e.status == 429:
-            wait = min(2 ** attempt, MAX_SLEEP)
-            print(f"⚠️ 429 rate-limit, retry in {wait}s (attempt {attempt+1})")
+            wait = min(2 ** 0, 600)
+            print(f"⚠️ Rate limited, retry in {wait}s")
             time.sleep(wait)
-            attempt += 1
             continue
         raise
