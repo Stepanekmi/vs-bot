@@ -1,6 +1,6 @@
 import os
 import requests
-import time  # for back-off
+import time  # for back‑off
 
 # Diagnostic prints
 print("👀 RUNNING UPDATED MAIN.PY")
@@ -14,53 +14,67 @@ BRANCH = "main"
 def fetch_file(repo_path: str, local_path: str):
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{BRANCH}/{repo_path}"
     try:
-        r = requests.get(url, timeout=15)
-        r.raise_for_status()
-        os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
-        with open(local_path, "wb") as f:
-            f.write(r.content)
-        print(f"✅ Fetched {repo_path}")
+        r = requests.get(url)
+        if r.status_code == 200:
+            with open(local_path, "wb") as f:
+                f.write(r.content)
+            print(f"✅ Fetched {repo_path}")
+        else:
+            print(f"⚠️ Failed to fetch {repo_path}: HTTP {r.status_code}")
     except Exception as e:
-        print(f"⚠️ Could not fetch {repo_path}: {e}")
+        print(f"❌ Exception fetching {repo_path}: {e}")
 
+# Ensure files are loaded before bot starts
+fetch_file("data/vs_data.csv", "vs_data.csv")
 fetch_file("data/power_data.csv", "power_data.csv")
-fetch_file("data/vs_data.csv",   "vs_data.csv")
-fetch_file("data/r4_list.txt",   "r4_list.txt")
-
-########################################
-# Discord-bot
-########################################
-
-TOKEN          = os.getenv("DISCORD_TOKEN")        # <— musí být nastaveno v Renderu
-GUILD_ID       = 1231529219029340234
-
-intents = discord.Intents.default()
+fetch_file("data/r4_list.txt", "r4_list.txt")
 
 from discord.ext import commands
-from vs_slash     import setup_vs_commands
-from power_slash  import setup_power_commands
-from keepalive    import keep_alive
+from power_slash import setup_power_commands
+from vs_slash import setup_vs_commands
+from vs_text_listener import setup_vs_text_listener
+import threading
+from keepalive import app
+
+# Discord IDs
+APPLICATION_ID = 1371568333333332118
+GUILD_ID       = 1231529219029340234
+TOKEN          = os.getenv("DISCORD_TOKEN")
+
+intents = discord.Intents.default()
+intents.message_content = True
 
 class MyBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            application_id=APPLICATION_ID
+        )
 
     async def setup_hook(self):
-        await setup_vs_commands(self)
+        print("⚙️ setup_hook spuštěn…")
         await setup_power_commands(self)
-        # rychlý sync na guildě
-        synced = await self.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"✅ Slash commands synced: {len(synced)}")
+        await setup_vs_commands(self)
+        setup_vs_text_listener(self)
+        # Sync slash commands to guild
+        await self.tree.sync(guild=discord.Object(id=GUILD_ID))
+        print(f"✅ Slash commands synced for GUILD_ID {GUILD_ID}")
 
 bot = MyBot()
 
 @bot.event
 async def on_ready():
-    print(f"🟢 Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
+    print("------")
 
-keep_alive()           # ping server pro Render
+# Keepalive server for UptimeRobot
+threading.Thread(
+    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+).start()
 
-# simple back-off loop
+
+print("🔑 Starting bot…")
 attempt = 0
 MAX_SLEEP = 600  # 10 min
 while True:
@@ -71,7 +85,7 @@ while True:
     except discord.errors.HTTPException as e:
         if e.status == 429:
             wait = min(2 ** attempt, MAX_SLEEP)
-            print(f"⚠️ 429 rate-limit, retry in {wait}s (attempt {attempt+1})")
+            print(f"⚠️ 429 rate‑limit, retry in {wait}s (attempt {attempt+1})")
             time.sleep(wait)
             attempt += 1
             continue
