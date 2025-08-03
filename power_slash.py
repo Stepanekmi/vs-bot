@@ -178,4 +178,8 @@ class Power(commands.Cog):
         dfp = df[df["player"].str.lower()==player.lower()].sort_values("timestamp")
         if dfp.empty:
             return await inter.response.send_message("⚠️ Žádné záznamy.", ephemeral=True)
-        lines = [f"{row['timestamp'][:16]} · T {row['tank']:.2f}M · R {row['rocket']:.
+        lines = [
+            f"{row['timestamp'][:16]} · T {row['tank']:.2f}M · R {row['rocket']:.2f}M · A {row['air']:.2f}M"
+            + (f" · T4 {row['team4']:.2f}M" if 'team4' in row and not pd.isna(row.get('team4')) else "")
+            for _, row in df_p.iterrows()
+        ]:.2f}M · R {row['rocket']:.
