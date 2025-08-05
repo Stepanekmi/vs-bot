@@ -105,7 +105,8 @@ class PowerCommands(commands.Cog):
         msg += [f"{i+1}. {r['player']} – {r['max_team']:.2f}M" for i, r in top_max.head(3).iterrows()]
         msg += ["", _h("🏆 By total strength")]
         msg += [f"{i+1}. {r['player']} – {r['total']:.2f}M" for i, r in top_tot.head(3).iterrows()]
-        await inter.response.send_message("\n".join(msg), ephemeral=True)
+        await inter.response.send_message("
+".join(msg), ephemeral=True)("\n".join(msg), ephemeral=True)
 
     # -------- /powerplayervsplayer --------
     @app_commands.command(name="powerplayervsplayer", description="Compare two players")
