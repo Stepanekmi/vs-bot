@@ -122,12 +122,48 @@ class PowerCommands(commands.Cog):
             done=discord.ui.Button(label="Done", style=discord.ButtonStyle.success); done.callback=self.finish; self.add_item(done)
             await inter.response.edit_message(view=self)
         async def sub_sel(self, inter): self.selected_subs=self.children[0].values; await inter.response.defer()
-        async def finish(self, inter):
-            await inter.response.defer(thinking=True,ephemeral=True)
-            selected=list(self.selected_main)+list(self.selected_subs)
-            df_last=_df().sort_values("timestamp").groupby("player",as_index=False).last(); df_last=df_last[df_last["player"].isin(selected)]
-            df_last["total"]=df_last[["tank","rocket","air"]].sum(axis=1); ranked=df_last.sort_values("total",ascending=False).reset_index(drop=True)
-            if len(ranked)<2+self.teams: return await inter.followup.send("Málo hráčů pro počet týmů.",ephemeral=True)
-            attackers=ranked.head(2); remaining=ranked.iloc[2:].reset_index(drop=True)
-            teams=[{\"members\":[r[\"player\"]],\"power\":r[\"total\"]} for _,r
-::contentReference[oaicite:0]{index=0}
+                async def finish(self, inter: Interaction):
+            await inter.response.defer(thinking=True, ephemeral=True)
+
+            selected = list(self.selected_main) + list(self.selected_subs)
+
+            df_last = (
+                _df()
+                .sort_values("timestamp")
+                .groupby("player", as_index=False)
+                .last()
+            )
+            df_last = df_last[df_last["player"].isin(selected)]
+            df_last["total"] = df_last[["tank", "rocket", "air"]].sum(axis=1)
+            ranked = df_last.sort_values("total", ascending=False).reset_index(drop=True)
+
+            if len(ranked) < 2 + self.teams:
+                return await inter.followup.send("Málo hráčů pro počet týmů.", ephemeral=True)
+
+            attackers = ranked.head(2)
+            remaining = ranked.iloc[2:].reset_index(drop=True)
+
+            # inicializace týmů
+            teams = [
+                {"members": [r["player"]], "power": r["total"]}
+                for _, r in remaining.head(self.teams).iterrows()
+            ]
+            remaining = remaining.iloc[self.teams :]
+
+            # rozdělení zbytku hráčů k nejslabším týmům
+            for _, row in remaining.iterrows():
+                weakest = min(teams, key=lambda t: t["power"])
+                weakest["members"].append(row["player"])
+                weakest["power"] += row["total"]
+
+            lines = [f"🗡 **Attack:** {', '.join(attackers['player'])}"]
+            for i, t in enumerate(teams, 1):
+                lines.append(
+                    f"🏳️ **Team {i}** ({t['power']:.2f}M): {', '.join(t['members'])}"
+                )
+            subs = [p for p in self.selected_subs if p not in self.selected_main]
+            if subs:
+                lines.append(f"♻️ **Subs:** {', '.join(subs)}")
+
+            await inter.followup.send("\n".join(lines), ephemeral=True)
+            self.stop()
