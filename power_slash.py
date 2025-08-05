@@ -122,7 +122,7 @@ class PowerCommands(commands.Cog):
             done=discord.ui.Button(label="Done", style=discord.ButtonStyle.success); done.callback=self.finish; self.add_item(done)
             await inter.response.edit_message(view=self)
         async def sub_sel(self, inter): self.selected_subs=self.children[0].values; await inter.response.defer()
-                async def finish(self, inter: Interaction):
+        async def finish(self, inter: Interaction):
             await inter.response.defer(thinking=True, ephemeral=True)
 
             selected = list(self.selected_main) + list(self.selected_subs)
@@ -148,7 +148,7 @@ class PowerCommands(commands.Cog):
                 {"members": [r["player"]], "power": r["total"]}
                 for _, r in remaining.head(self.teams).iterrows()
             ]
-            remaining = remaining.iloc[self.teams :]
+            remaining = remaining.iloc[self.teams:]
 
             # rozdělení zbytku hráčů k nejslabším týmům
             for _, row in remaining.iterrows():
