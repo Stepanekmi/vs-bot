@@ -28,18 +28,20 @@ def backup_power_file():
     backup_name = f"power_data_backup_{ts}.csv"
     backup_path = os.path.join(BACKUP_DIR, backup_name)
     pd.read_csv(POWER_FILE).to_csv(backup_path, index=False)
-    # keep only the latest backups
     files = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith("power_data_backup_")])
     if len(files) > MAX_BACKUPS:
         for old in files[:-MAX_BACKUPS]:
             os.remove(os.path.join(BACKUP_DIR, old))
 
+
 def load_power_data() -> pd.DataFrame:
     return pd.read_csv(POWER_FILE)
+
 
 def save_power_data(df: pd.DataFrame):
     df.to_csv(POWER_FILE, index=False)
     save_to_github(POWER_FILE)
+
 
 class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -75,6 +77,7 @@ class PowerCommands(commands.Cog):
                 )
 
         await interaction.response.send_modal(StormModal())
+
 
 class StormSetupView(View):
     def __init__(self, players: list[str], team_count: int):
@@ -135,7 +138,7 @@ class StormSetupView(View):
     async def finish(self, interaction: Interaction):
         df = load_power_data()
         latest = df.sort_values("timestamp").drop_duplicates(subset=["player"], keep="last")
-        strength = (latest.set_index("player")[["tank","rocket","air"]].sum(axis=1)).to_dict()
+        strength = (latest.set_index("player")[['tank','rocket','air']].sum(axis=1)).to_dict()
 
         sel_strength = {p: strength.get(p, 0) for p in self.selected}
         attackers = sorted(sel_strength, key=sel_strength.get, reverse=True)[:2]
@@ -241,7 +244,7 @@ class RecordSelectView(View):
         self.add_item(btn_done)
 
     def _make_select(self) -> Select:
-        opts = []
+       opts = []
         for i, row in self.records.iloc[self.offset:self.offset+PAGE_SIZE].iterrows():
             date_str = row["timestamp"][:10]
             desc = f"Tank: {row['tank']}, Rocket: {row['rocket']}, Air: {row['air']}"
@@ -288,12 +291,10 @@ class RecordSelectView(View):
             rec_texts.append(
                 f"{row['timestamp'][:10]} – Tank: {row['tank']}, Rocket: {row['rocket']}, Air: {row['air']}"
             )
-        summary = "
-".join(rec_texts)
+        summary = "\n".join(rec_texts)
         view = ConfirmView(self.player, self.selected_idx)
         await interaction.response.edit_message(
-            content=f"Confirm deletion of these records for '{self.player}':
-{summary}",
+            content=f"Confirm deletion of these records for '{self.player}':\n{summary}",
             view=view
         )
 
