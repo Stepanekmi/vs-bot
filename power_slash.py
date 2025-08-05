@@ -33,51 +33,48 @@ def backup_power_file():
         for old in files[:-MAX_BACKUPS]:
             os.remove(os.path.join(BACKUP_DIR, old))
 
-
 def load_power_data() -> pd.DataFrame:
     return pd.read_csv(POWER_FILE)
-
 
 def save_power_data(df: pd.DataFrame):
     df.to_csv(POWER_FILE, index=False)
     save_to_github(POWER_FILE)
 
-
 class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ... existing commands omitted for brevity ...
-
     @app_commands.command(name="stormsetup", description="Setup balanced teams from power data")
     async def stormsetup(self, interaction: Interaction):
         class StormModal(Modal, title="Storm Setup"):
-            team_count = TextInput(
-                label="Number of teams",
-                style=TextStyle.short,
-                placeholder="Enter an integer"
-            )
-
+            team_count = TextInput(label="Number of teams", style=TextStyle.short, placeholder="Enter an integer")
             async def on_submit(inner_self, modal_inter: Interaction):
                 try:
                     count = int(inner_self.team_count.value)
                     if count < 1:
                         raise ValueError
                 except ValueError:
-                    await modal_inter.response.send_message(
-                        "Invalid number of teams; please enter a positive integer.", ephemeral=True
-                    )
+                    await modal_inter.response.send_message("Invalid number of teams; please enter a positive integer.", ephemeral=True)
                     return
-
                 df = load_power_data()
                 players = sorted(df["player"].unique())
                 view = StormSetupView(players, count)
-                await modal_inter.response.send_message(
-                    f"Select players ({len(players)} total), page 1:", view=view, ephemeral=True
-                )
-
+                await modal_inter.response.send_message(f"Select players ({len(players)} total), page 1:", view=view, ephemeral=True)
         await interaction.response.send_modal(StormModal())
 
+    @app_commands.command(name="powererase", description="Erase player data from power CSV")
+    async def powererase(self, interaction: Interaction):
+        class EraseModal(Modal, title="Power Erase"):
+            player_name = TextInput(label="Player name to erase", style=TextStyle.short)
+            async def on_submit(inner, modal_inter: Interaction):
+                name = inner.player_name.value.strip()
+                df = load_power_data()
+                if name not in df["player"].values:
+                    await modal_inter.response.send_message(f"Player '{name}' not found.", ephemeral=True)
+                    return
+                view = EraseChoiceView(name)
+                await modal_inter.response.send_message(f"Choose erase option for '{name}':", view=view, ephemeral=True)
+        await interaction.response.send_modal(EraseModal())
 
 class StormSetupView(View):
     def __init__(self, players: list[str], team_count: int):
@@ -86,28 +83,18 @@ class StormSetupView(View):
         self.team_count = team_count
         self.selected: list[str] = []
         self.offset = 0
-
         self.select = self._make_select()
         self.next_button = Button(label="Next", style=discord.ButtonStyle.secondary)
         self.done_button = Button(label="Done", style=discord.ButtonStyle.success)
-
         self.next_button.callback = self.next_page
         self.done_button.callback = self.finish
-
         self.add_item(self.select)
         self.add_item(self.next_button)
         self.add_item(self.done_button)
 
     def _make_select(self) -> Select:
-        options = [
-            discord.SelectOption(label=p) for p in self.players[self.offset:self.offset + PAGE_SIZE]
-        ]
-        menu = Select(
-            placeholder="Select players...",
-            min_values=0,
-            max_values=len(options),
-            options=options
-        )
+        opts = [discord.SelectOption(label=p) for p in self.players[self.offset:self.offset+PAGE_SIZE]]
+        menu = Select(placeholder="Select players...", min_values=0, max_values=len(opts), options=opts)
         menu.callback = self.handle_select
         return menu
 
@@ -123,155 +110,133 @@ class StormSetupView(View):
         if self.offset >= len(self.players):
             await interaction.response.send_message("No more players to select.", ephemeral=True)
             return
-
         self.clear_items()
         self.select = self._make_select()
         self.add_item(self.select)
         self.add_item(self.next_button)
         self.add_item(self.done_button)
-        page_num = (self.offset // PAGE_SIZE) + 1
-        total_pages = ((len(self.players) - 1) // PAGE_SIZE) + 1
-        await interaction.response.edit_message(
-            content=f"Select players, page {page_num} of {total_pages}:", view=self
-        )
+        page = (self.offset // PAGE_SIZE) + 1
+        total = ((len(self.players)-1)//PAGE_SIZE)+1
+        await interaction.response.edit_message(content=f"Select players, page {page} of {total}:", view=self)
 
     async def finish(self, interaction: Interaction):
         df = load_power_data()
         latest = df.sort_values("timestamp").drop_duplicates(subset=["player"], keep="last")
-        strength = (latest.set_index("player")[['tank','rocket','air']].sum(axis=1)).to_dict()
-
-        sel_strength = {p: strength.get(p, 0) for p in self.selected}
+        strength = latest.set_index("player")[['tank','rocket','air']].sum(axis=1).to_dict()
+        sel_strength = {p: strength.get(p,0) for p in self.selected}
         attackers = sorted(sel_strength, key=sel_strength.get, reverse=True)[:2]
         remaining = [p for p in self.selected if p not in attackers]
-
-        captains = sorted(
-            remaining, key=lambda x: sel_strength[x], reverse=True
-        )[:self.team_count]
-        for cap in captains:
-            remaining.remove(cap)
-
-        teams = {
-            i: {"captain": captains[i], "members": []}
-            for i in range(self.team_count)
-        }
-        team_strength = {i: strength.get(captains[i], 0) for i in range(self.team_count)}
-
+        captains = sorted(remaining, key=lambda x: sel_strength[x], reverse=True)[:self.team_count]
+        for c in captains: remaining.remove(c)
+        teams = {i:{"captain": captains[i], "members":[]} for i in range(self.team_count)}
+        team_str = {i:strength[captains[i]] for i in teams}
         for p in sorted(remaining, key=lambda x: sel_strength[x], reverse=True):
-            weakest = min(team_strength, key=team_strength.get)
-            teams[weakest]["members"].append(p)
-            team_strength[weakest] += sel_strength[p]
-
+            w = min(team_str, key=team_str.get)
+            teams[w]["members"].append(p)
+            team_str[w] += sel_strength[p]
         embed = discord.Embed(title="Storm Setup Results", color=discord.Color.blue())
-        embed.add_field(
-            name="Attackers",
-            value=", ".join(f"🗡️ {p}" for p in attackers),
-            inline=False
-        )
-        for i in range(self.team_count):
+        embed.add_field(name="Attackers", value=", ".join(f"🗡️ {p}" for p in attackers), inline=False)
+        for i in teams:
             name = f"Team {i+1} (🛡️ {teams[i]['captain']})"
-            members = ", ".join(teams[i]["members"]) or "None"
-            embed.add_field(name=name, value=members, inline=False)
-
+            mem = ", ".join(teams[i]['members']) or "None"
+            embed.add_field(name=name, value=mem, inline=False)
         await interaction.response.edit_message(content=None, embed=embed, view=None)
-
-@app_commands.command(name="powererase", description="Erase player data from power CSV")
-async def powererase(interaction: Interaction):
-    class EraseModal(Modal, title="Power Erase"):
-        player_name = TextInput(label="Player name to erase", style=TextStyle.short)
-
-        async def on_submit(inner, modal_inter: Interaction):
-            name = inner.player_name.value.strip()
-            df = load_power_data()
-            if name not in df["player"].values:
-                await modal_inter.response.send_message(
-                    f"Player '{name}' not found.", ephemeral=True
-                )
-                return
-            view = EraseChoiceView(name)
-            await modal_inter.response.send_message(
-                f"Choose erase option for '{name}':", view=view, ephemeral=True
-            )
-
-    await interaction.response.send_modal(EraseModal())
 
 class EraseChoiceView(View):
     def __init__(self, player_name: str):
         super().__init__(timeout=None)
         self.player = player_name
         btn_all = Button(label="Delete All", style=discord.ButtonStyle.danger)
-        btn_rec = Button(label="Delete Records", style=discord.ButtonStyle.secondary)
-
+        btn_sel = Button(label="Delete Records", style=discord.ButtonStyle.secondary)
         btn_all.callback = self.delete_all
-        btn_rec.callback = self.delete_records
-
+        btn_sel.callback = self.delete_records
         self.add_item(btn_all)
-        self.add_item(btn_rec)
+        self.add_item(btn_sel)
 
     async def delete_all(self, interaction: Interaction):
         backup_power_file()
         df = load_power_data()
-        df = df[df["player"] != self.player]
+        df = df[df['player']!=self.player]
         save_power_data(df)
-        await interaction.response.edit_message(
-            content=f"All data for '{self.player}' has been deleted.", view=None
-        )
+        await interaction.response.edit_message(content=f"All data for '{self.player}' has been deleted.", view=None)
 
     async def delete_records(self, interaction: Interaction):
         df = load_power_data()
-        recs = df[df["player"] == self.player].sort_values("timestamp", ascending=False)
-        view = RecordSelectView(self.player, recs)
-        await interaction.response.edit_message(
-            content="Select records to delete:", view=view
-        )
+        recs = df[df['player']==self.player].sort_values('timestamp', ascending=False)
+        view = RecordSelectView(self.player, recs.reset_index(drop=True))
+        await interaction.response.edit_message(content="Select records to delete:", view=view)
 
 class RecordSelectView(View):
     def __init__(self, player: str, records: pd.DataFrame):
         super().__init__(timeout=None)
         self.player = player
-        self.records = records.reset_index(drop=True)
+        self.records = records
         self.offset = 0
-        self.selected_idx: list[int] = []
-
+        self.selected = []
         self.select = self._make_select()
-        btn_next = Button(label="Next", style=discord.ButtonStyle.secondary)
-        btn_done = Button(label="Delete", style=discord.ButtonStyle.danger)
-
-        btn_next.callback = self.next_page
-        btn_done.callback = self.confirm_delete
-
+        btn_n = Button(label="Next", style=discord.ButtonStyle.secondary)
+        btn_d = Button(label="Delete", style=discord.ButtonStyle.danger)
+        btn_n.callback = self.next_page
+        btn_d.callback = self.confirm_delete
         self.add_item(self.select)
-        self.add_item(btn_next)
-        self.add_item(btn_done)
+        self.add_item(btn_n)
+        self.add_item(btn_d)
 
-    def _make_select(self) -> Select:
+    def _make_select(self):
         opts = []
-        for i, row in self.records.iloc[self.offset:self.offset+PAGE_SIZE].iterrows():
-            date_str = row["timestamp"][:10]
+        for i,row in self.records.iloc[self.offset:self.offset+PAGE_SIZE].iterrows():
+            date = row['timestamp'][:10]
             desc = f"Tank: {row['tank']}, Rocket: {row['rocket']}, Air: {row['air']}"
-            opts.append(discord.SelectOption(label=date_str, description=desc, value=str(i)))
-        menu = Select(
-            placeholder="Select records...", min_values=0, max_values=len(opts), options=opts
-        )
+            opts.append(discord.SelectOption(label=date, description=desc, value=str(i)))
+        menu = Select(placeholder="Select records...", min_values=0, max_values=len(opts), options=opts)
         menu.callback = self.handle_select
         return menu
 
     async def handle_select(self, interaction: Interaction):
-        for v in interaction.data.get("values", []):
-            idx = int(v)
-            if idx not in self.selected_idx:
-                self.selected_idx.append(idx)
+        for v in interaction.data.get('values',[]):
+            idx=int(v)
+            if idx not in self.selected: self.selected.append(idx)
         await interaction.response.defer()
 
     async def next_page(self, interaction: Interaction):
-        self.offset += PAGE_SIZE
-        if self.offset >= len(self.records):
+        self.offset+=PAGE_SIZE
+        if self.offset>=len(self.records):
             await interaction.response.send_message("No more records.", ephemeral=True)
             return
         self.clear_items()
-        self.select = self._make_select()
-        btn_next = Button(label="Next", style=discord.ButtonStyle.secondary)
-        btn_done = Button(label="Delete", style=discord.ButtonStyle.danger)
-        btn_next.callback = self.next_page
-        btn_done.callback = self.confirm_delete
-        self.add_item(self.select)
-        self.add_item(btn_next)
+        self.select=self._make_select()
+        btn_n=Button(label="Next", style=discord.ButtonStyle.secondary);btn_d=Button(label="Delete", style=discord.ButtonStyle.danger)
+        btn_n.callback=self.next_page;btn_d.callback=self.confirm_delete
+        self.add_item(self.select);self.add_item(btn_n);self.add_item(btn_d)
+        page=(self.offset//PAGE_SIZE)+1
+        await interaction.response.edit_message(content=f"Select records, page {page}:", view=self)
+
+    async def confirm_delete(self, interaction: Interaction):
+        if not self.selected:
+            await interaction.response.send_message("No records selected.", ephemeral=True)
+            return
+        rec_texts=[f"{self.records.iloc[i]['timestamp'][:10]} – Tank: {self.records.iloc[i]['tank']}, Rocket: {self.records.iloc[i]['rocket']}, Air: {self.records.iloc[i]['air']}" for i in self.selected]
+        summary="\n".join(rec_texts)
+        view=ConfirmView(self.player, self.selected)
+        await interaction.response.edit_message(content=f"Confirm deletion of these records for '{self.player}':\n{summary}", view=view)
+
+class ConfirmView(View):
+    def __init__(self, player, idxs):
+        super().__init__(timeout=None)
+        self.player=player;self.idxs=idxs
+        btn_y=Button(label="Yes, delete", style=discord.ButtonStyle.danger);btn_n=Button(label="Cancel", style=discord.ButtonStyle.secondary)
+        btn_y.callback=self.do_delete;btn_n.callback=self.cancel
+        self.add_item(btn_y);self.add_item(btn_n)
+    async def do_delete(self, interaction: Interaction):
+        backup_power_file()
+        df=load_power_data()
+        recs=df[df['player']==self.player].sort_values('timestamp',ascending=False).reset_index()
+        to_drop=recs.loc[self.idxs,'index']
+        df=df.drop(index=to_drop)
+        save_power_data(df)
+        await interaction.response.edit_message(content="Selected records have been deleted.", view=None)
+    async def cancel(self, interaction: Interaction):
+        await interaction.response.edit_message(content="Deletion cancelled.", view=None)
+
+async def setup_power_commands(bot: commands.Bot):
+    await bot.add_cog(PowerCommands(bot))
