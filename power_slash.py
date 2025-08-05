@@ -169,3 +169,8 @@ class PowerCommands(commands.Cog):
             self.add_item(self._mk_select(self.main_candidates, "Pick main players (max 20)", self.main_sel))
             nxt = discord.ui.Button(label="Next", style=discord.ButtonStyle.primary)
             nxt.callback = self.to_subs; self.add
+# ------------------ export ------------------
+async def setup_power_commands(bot: commands.Bot):
+    """Importováno v main.py – zaregistruje PowerCommands jako cog."""
+    await bot.add_cog(PowerCommands(bot))
+
