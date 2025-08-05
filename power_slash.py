@@ -28,18 +28,20 @@ def backup_power_file():
     backup_name = f"power_data_backup_{ts}.csv"
     backup_path = os.path.join(BACKUP_DIR, backup_name)
     pd.read_csv(POWER_FILE).to_csv(backup_path, index=False)
-    # keep only the latest backups
     files = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith("power_data_backup_")])
     if len(files) > MAX_BACKUPS:
         for old in files[:-MAX_BACKUPS]:
             os.remove(os.path.join(BACKUP_DIR, old))
 
+
 def load_power_data() -> pd.DataFrame:
     return pd.read_csv(POWER_FILE)
+
 
 def save_power_data(df: pd.DataFrame):
     df.to_csv(POWER_FILE, index=False)
     save_to_github(POWER_FILE)
+
 
 class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -75,6 +77,7 @@ class PowerCommands(commands.Cog):
                 )
 
         await interaction.response.send_modal(StormModal())
+
 
 class StormSetupView(View):
     def __init__(self, players: list[str], team_count: int):
@@ -135,7 +138,7 @@ class StormSetupView(View):
     async def finish(self, interaction: Interaction):
         df = load_power_data()
         latest = df.sort_values("timestamp").drop_duplicates(subset=["player"], keep="last")
-        strength = (latest.set_index("player")[["tank","rocket","air"]].sum(axis=1)).to_dict()
+        strength = (latest.set_index("player")[['tank','rocket','air']].sum(axis=1)).to_dict()
 
         sel_strength = {p: strength.get(p, 0) for p in self.selected}
         attackers = sorted(sel_strength, key=sel_strength.get, reverse=True)[:2]
@@ -272,56 +275,3 @@ class RecordSelectView(View):
         btn_done.callback = self.confirm_delete
         self.add_item(self.select)
         self.add_item(btn_next)
-        self.add_item(btn_done)
-        page_num = (self.offset // PAGE_SIZE) + 1
-        await interaction.response.edit_message(
-            content=f"Select records, page {page_num}:", view=self
-        )
-
-    async def confirm_delete(self, interaction: Interaction):
-        if not self.selected_idx:
-            await interaction.response.send_message("No records selected.", ephemeral=True)
-            return
-        rec_texts = []
-        for idx in self.selected_idx:
-            row = self.records.iloc[idx]
-            rec_texts.append(
-                f"{row['timestamp'][:10]} – Tank: {row['tank']}, Rocket: {row['rocket']}, Air: {row['air']}"
-            )
-        summary = "
-".join(rec_texts)
-        view = ConfirmView(self.player, self.selected_idx)
-        await interaction.response.edit_message(
-            content=f"Confirm deletion of these records for '{self.player}':
-{summary}",
-            view=view
-        )
-
-class ConfirmView(View):
-    def __init__(self, player: str, idxs: list[int]):
-        super().__init__(timeout=None)
-        self.player = player
-        self.idxs = idxs
-        btn_yes = Button(label="Yes, delete", style=discord.ButtonStyle.danger)
-        btn_no = Button(label="Cancel", style=discord.ButtonStyle.secondary)
-        btn_yes.callback = self.do_delete
-        btn_no.callback = self.cancel
-        self.add_item(btn_yes)
-        self.add_item(btn_no)
-
-    async def do_delete(self, interaction: Interaction):
-        backup_power_file()
-        df = load_power_data()
-        recs = df[df["player"] == self.player].sort_values("timestamp", ascending=False).reset_index()
-        to_drop = recs.iloc[self.idxs]["index"]
-        df = df.drop(index=to_drop)
-        save_power_data(df)
-        await interaction.response.edit_message(
-            content="Selected records have been deleted.", view=None
-        )
-
-    async def cancel(self, interaction: Interaction):
-        await interaction.response.edit_message(content="Deletion cancelled.", view=None)
-
-async def setup_power_commands(bot: commands.Bot):
-    await bot.add_cog(PowerCommands(bot))
