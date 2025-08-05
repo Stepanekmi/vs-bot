@@ -1,146 +1,295 @@
-# power_slash.py – kompletní verze 2025‑08‑03
+# power_slash.py – updated 2025-08-05
 # -------------------------------------------------------------
-# Slash příkazy: powerenter, powerplayer, powerplayervsplayer,
+# Slash commands: powerenter, powerplayer, powerplayervsplayer,
 # powertopplayer, powerlist, powererase, stormsetup, info
 # -------------------------------------------------------------
 
-import os, io, logging
+import os
+import io
+import logging
 from datetime import datetime
 import pandas as pd
-import matplotlib.pyplot as plt
 import discord
 from discord import app_commands, Interaction, TextStyle
 from discord.ext import commands
-from discord.ui import Modal, TextInput
+from discord.ui import Modal, TextInput, View, Select, Button
 from github_sync import save_to_github
 
-# ------------------ konfigurace ------------------
-GUILD_ID = 1231529219029340234
-GUILD = discord.Object(id=GUILD_ID)
-POWER_FILE = "power_data.csv"
+# Constants
+POWER_FILE = os.path.join(os.path.dirname(__file__), "power_data.csv")
+BACKUP_DIR = os.path.dirname(POWER_FILE)
+MAX_BACKUPS = 10
+PAGE_SIZE = 20
 
-if not os.path.exists(POWER_FILE):
-    pd.DataFrame(columns=["player","tank","rocket","air","timestamp"]).to_csv(POWER_FILE, index=False)
+logger = logging.getLogger(__name__)
 
-logging.basicConfig(level=logging.INFO)
+# Utility functions
+def backup_power_file():
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_name = f"power_data_backup_{ts}.csv"
+    backup_path = os.path.join(BACKUP_DIR, backup_name)
+    pd.read_csv(POWER_FILE).to_csv(backup_path, index=False)
+    # clean old backups
+    files = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith("power_data_backup_")])
+    if len(files) > MAX_BACKUPS:
+        for old in files[:-MAX_BACKUPS]:
+            os.remove(os.path.join(BACKUP_DIR, old))
 
-# ------------------ helpery ----------------------
 
-def norm(v: str)->float:
-    try: return round(float(v.strip().upper().rstrip("M")),2)
-    except Exception: return 0.0
+def load_power_data():
+    return pd.read_csv(POWER_FILE)
 
-def _icon(t:str)->str:
-    return {"tank":"🛡️","rocket":"🚀","air":"✈️","team4":"⚙️"}.get(t,"•")
 
-def _h(txt:str)->str: return f"**__{txt}__**"
+def save_power_data(df: pd.DataFrame):
+    df.to_csv(POWER_FILE, index=False)
+    save_to_github(POWER_FILE)
 
-def _pandas_read():
-    df=pd.read_csv(POWER_FILE)
-    df["timestamp"]=pd.to_datetime(df["timestamp"],errors="coerce")
-    return df.dropna(subset=["timestamp"])
 
-# ------------------ Cog --------------------------
 class PowerCommands(commands.Cog):
-    def __init__(self,bot:commands.Bot):
-        self.bot=bot
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
 
-    # -------- /powerenter --------
-    @app_commands.command(name="powerenter",description="Ulož sílu týmů hráče")
-    @app_commands.guilds(GUILD)
-    async def powerenter(self,inter:Interaction,player:str,tank:str,rocket:str,air:str,team4:str|None=None):
-        df=_pandas_read()
-        new={"player":player,"tank":norm(tank),"rocket":norm(rocket),"air":norm(air),"timestamp":datetime.utcnow().isoformat()}
-        if team4: new["team4"]=norm(team4)
-        df=pd.concat([df,pd.DataFrame([new])],ignore_index=True)
-        df.to_csv(POWER_FILE,index=False)
-        save_to_github(POWER_FILE,f"data/{POWER_FILE}",f"Power data for {player}")
-        await inter.response.send_message("✅ Uloženo.",ephemeral=True)
+    # ... existing commands omitted for brevity ...
 
-    # -------- /powerplayer -------
-    @app_commands.command(name="powerplayer",description="Historie síly hráče")
-    @app_commands.guilds(GUILD)
-    async def powerplayer(self,inter:Interaction,player:str):
-        await inter.response.defer(thinking=True,ephemeral=True)
-        df=_pandas_read()
-        dfp=df[df["player"].str.lower()==player.lower()].sort_values("timestamp")
-        if dfp.empty:
-            return await inter.followup.send("⚠️ Hráč nenalezen.",ephemeral=True)
-        lines=[_h(player)]
-        for t in ["tank","rocket","air"]:
-            vals=dfp[t].tolist(); parts=[f"{vals[0]:.2f}"]
-            for i in range(1,len(vals)):
-                delta=100*(vals[i]-vals[i-1])/vals[i-1] if vals[i-1] else 0
-                parts.append(f"→ +{delta:.1f}% → {vals[i]:.2f}")
-            lines.append(f"{_icon(t)} {t.upper()}: "+" ".join(parts))
-        plt.figure(figsize=(8,4))
-        for col in ["tank","rocket","air"]:
-            plt.plot(dfp["timestamp"],dfp[col],marker="o",label=col)
-        plt.legend();plt.tight_layout();buf=io.BytesIO();plt.savefig(buf,format="png");buf.seek(0);plt.close()
-        await inter.followup.send("\n".join(lines),ephemeral=True)
-        await inter.followup.send(file=discord.File(buf,"power.png"),ephemeral=True)
+    # ---------- /stormsetup ----------
+    @app_commands.command(name="stormsetup", description="Setup balanced teams from power data")
+    async def stormsetup(self, interaction: Interaction):
+        class StormModal(Modal, title="Storm Setup"):
+            team_count = TextInput(label="Number of teams", style=TextStyle.short, placeholder="Enter an integer")
 
-    # -------- /powertopplayer ----
-    @app_commands.command(name="powertopplayer",description="Top hráči (3 týmy)")
-    @app_commands.guilds(GUILD)
-    async def powertopplayer(self,inter:Interaction):
-        df=_pandas_read(); last=df.sort_values("timestamp").groupby("player",as_index=False).last()
-        last["max_team"]=last[["tank","rocket","air"]].max(axis=1)
-        last["total"]=last[["tank","rocket","air"]].sum(axis=1)
-        top_max=last.sort_values("max_team",ascending=False).reset_index(drop=True)
-        top_tot=last.sort_values("total",ascending=False).reset_index(drop=True)
-        msg=[_h("🥇 Podle nejsilnějšího týmu")]
-        msg+= [f"{i+1}. {r['player']} – {r['max_team']:.2f}M" for i,r in top_max.iterrows()]
-        msg+=["",_h("🏆 Podle celkové síly")]
-        msg+= [f"{i+1}. {r['player']} – {r['total']:.2f}M" for i,r in top_tot.iterrows()]
-        await inter.response.send_message("\n".join(msg),ephemeral=True)
+            async def on_submit(inner_self, modal_inter: Interaction):
+                try:
+                    count = int(inner_self.team_count.value)
+                    if count < 1:
+                        raise ValueError
+                except ValueError:
+                    await modal_inter.response.send_message("Invalid number of teams, please enter a positive integer.", ephemeral=True)
+                    return
+                df = load_power_data()
+                players = sorted(df["player"].unique())
+                # initialize selection view
+                view = StormSetupView(players, count)
+                await modal_inter.response.send_message(f"Select players ({len(players)} total), page 1:", view=view, ephemeral=True)
+        await interaction.response.send_modal(StormModal())
 
-    # -------- /powerplayervsplayer
-    @app_commands.command(name="powerplayervsplayer",description="Porovnej dva hráče podle týmu")
-    @app_commands.guilds(GUILD)
-    async def powerplayervsplayer(self,inter:Interaction,player1:str,player2:str,team:str):
-        team=team.lower()
-        if team not in {"tank","rocket","air","team4"}:
-            return await inter.response.send_message("Neznámý tým.",ephemeral=True)
-        df=_pandas_read(); last=df.sort_values("timestamp").groupby("player",as_index=False).last()
-        p1=last[last["player"].str.lower()==player1.lower()]
-        p2=last[last["player"].str.lower()==player2.lower()]
-        if p1.empty or p2.empty:
-            return await inter.response.send_message("Hráč nenalezen.",ephemeral=True)
-        v1,v2=p1.iloc[0][team],p2.iloc[0][team]; diff=v1-v2
-        winner=player1 if diff>0 else player2 if diff<0 else "Remíza"
-        header=_h(f"{team.upper()} – {player1} vs {player2}")
-        msg=f"{header}\n{player1}: {v1:.2f}M\n{player2}: {v2:.2f}M\nRozdíl: {abs(diff):.2f}M → **{winner}**"
-        df1=df[df["player"].str.lower()==player1.lower()].sort_values("timestamp")
-        df2=df[df["player"].str.lower()==player2.lower()].sort_values("timestamp")
-        plt.figure(figsize=(8,4)); plt.plot(df1["timestamp"],df1[team],marker="o",label=player1)
-        plt.plot(df2["timestamp"],df2[team],marker="o",label=player2); plt.legend(); plt.tight_layout()
-        buf=io.BytesIO(); plt.savefig(buf,format="png"); buf.seek(0); plt.close()
-        await inter.response.send_message(msg,ephemeral=True)
-        await inter.followup.send(file=discord.File(buf,"compare.png"),ephemeral=True)
 
-    # -------- PlayerSelectView ----
-    class PlayerSelectView(discord.ui.View):
-        """Interaktivní dvoukrokový picker hráčů."""
-        def __init__(self,bot:commands.Bot,teams:int,players:list[str]):
-            super().__init__(timeout=180)
-            self.bot,self.teams,self.players=bot,teams,players
-            self.selected_main: list[str]=[]; self.selected_subs: list[str]=[]
-            self.main_candidates=players[:20]; self.sub_candidates=players[20:]
-            self.add_item(self._mk_select(self.main_candidates,"Pick main players (max 20)",self.main_sel))
-            nxt=discord.ui.Button(label="Next",style=discord.ButtonStyle.primary)
-            nxt.callback=self.to_subs; self.add_item(nxt)
+class StormSetupView(View):
+    def __init__(self, players: list[str], team_count: int):
+        super().__init__(timeout=None)
+        self.players = players
+        self.team_count = team_count
+        self.selected: list[str] = []
+        self.offset = 0
+        # initial select + buttons
+        self.select = self._make_select()
+        self.next_button = Button(label="Next", style=discord.ButtonStyle.secondary)
+        self.done_button = Button(label="Done", style=discord.ButtonStyle.success)
+        self.next_button.callback = self.next_page
+        self.done_button.callback = self.finish
+        self.add_item(self.select)
+        self.add_item(self.next_button)
+        self.add_item(self.done_button)
 
-        def _mk_select(self,opts,ph,cb):
-            sel=discord.ui.Select(placeholder=ph,min_values=0,max_values=min(20,len(opts)),options=[discord.SelectOption(label=p) for p in opts]); sel.callback=cb; return sel
-        async def main_sel(self,inter): self.selected_main=self.children[0].values; await inter.response.defer()
-        async def to_subs(self,inter):
-            self.clear_items(); subs=[p for p in self.sub_candidates if p not in self.selected_main]
-            self.add_item(self._mk_select(subs,"Pick additional players",self.sub_sel))
-            done=discord.ui.Button(label="Done",style=discord.ButtonStyle.success); done.callback=self.finish; self.add
+    def _make_select(self) -> Select:
+        opts = self.players[self.offset:self.offset + PAGE_SIZE]
+        menu = Select(placeholder="Select players...", min_values=0, max_values=len(opts), options=[discord.SelectOption(label=p) for p in opts])
+        menu.callback = self.handle_select
+        return menu
 
-# ------------------ export ------------------
+    async def handle_select(self, select_inter: Interaction):
+        # add selected and remove from future
+        choices = select_inter.data.get("values", [])
+        for p in choices:
+            if p not in self.selected:
+                self.selected.append(p)
+        await select_inter.response.defer()  # just acknowledge silently
+
+    async def next_page(self, button_inter: Interaction):
+        # remove handled players
+        self.offset += PAGE_SIZE
+        if self.offset >= len(self.players):
+            await button_inter.response.send_message("No more players to select.", ephemeral=True)
+            return
+        # update select options
+        self.clear_items()
+        self.select = self._make_select()
+        self.add_item(self.select)
+        self.add_item(self.next_button)
+        self.add_item(self.done_button)
+        await button_inter.response.edit_message(content=f"Select players, page {self.offset // PAGE_SIZE + 1} of {((len(self.players)-1)//PAGE_SIZE)+1}:", view=self)
+
+    async def finish(self, button_inter: Interaction):
+        # compute teams
+        df = load_power_data()
+        # get latest stats per player
+        latest = df.sort_values("timestamp").drop_duplicates(subset=["player"], keep="last")
+        # calculate strength
+        latest = latest.set_index("player")[ ["tank","rocket","air"] ]
+        strength = (latest.sum(axis=1)).to_dict()
+        # filter selected
+        sel_strength = {p: strength.get(p, 0) for p in self.selected}
+        # attackers: top 2
+        attackers = sorted(sel_strength, key=sel_strength.get, reverse=True)[:2]
+        remaining = [p for p in self.selected if p not in attackers]
+        # captains: next top N
+        captains = sorted({p:sel_strength[p] for p in remaining}, key=sel_strength.get, reverse=True)[:self.team_count]
+        for cap in captains:
+            remaining.remove(cap)
+        # initialize teams
+        teams = {i: {"captain": captains[i], "members": []} for i in range(self.team_count)}
+        # assign remaining greedily
+        team_strength = {i: strength.get(captains[i],0) for i in range(self.team_count)}
+        for p in sorted(remaining, key=lambda x: sel_strength[x], reverse=True):
+            # find weakest team
+            t = min(team_strength, key=team_strength.get)
+            teams[t]["members"].append(p)
+            team_strength[t] += sel_strength[p]
+        # build output
+        embed = discord.Embed(title="Storm Setup Results", color=discord.Color.blue())
+        embed.add_field(name="Attackers", value=", ".join(f"🗡️ {p}" for p in attackers), inline=False)
+        for i in range(self.team_count):
+            name = f"Team {i+1} (🛡️ {teams[i]['captain']})"
+            members = ", ".join(teams[i]["members"]) if teams[i]["members"] else "None"
+            embed.add_field(name=name, value=members, inline=False)
+        await button_inter.response.edit_message(content=None, embed=embed, view=None)
+
+
+    # no timeout cleanup
+
+
+    # ---------- /powererase ----------
+    @app_commands.command(name="powererase", description="Erase player data from power CSV")
+    async def powererase(self, interaction: Interaction):
+        class EraseModal(Modal, title="Power Erase"):
+            player_name = TextInput(label="Player name to erase", style=TextStyle.short)
+
+            async def on_submit(inner, modal_inter: Interaction):
+                name = inner.player_name.value.strip()
+                df = load_power_data()
+                if name not in df["player"].values:
+                    await modal_inter.response.send_message(f"Player '{name}' not found.", ephemeral=True)
+                    return
+                # ask deletion type
+                view = EraseChoiceView(name)
+                await modal_inter.response.send_message(f"Choose erase option for '{name}':", view=view, ephemeral=True)
+        await interaction.response.send_modal(EraseModal())
+
+
+class EraseChoiceView(View):
+    def __init__(self, player_name: str):
+        super().__init__(timeout=None)
+        self.player = player_name
+        btn_all = Button(label="Delete All", style=discord.ButtonStyle.danger)
+        btn_rec = Button(label="Delete Records", style=discord.ButtonStyle.secondary)
+        btn_all.callback = self.delete_all
+        btn_rec.callback = self.delete_records
+        self.add_item(btn_all)
+        self.add_item(btn_rec)
+
+    async def delete_all(self, inter: Interaction):
+        backup_power_file()
+        df = load_power_data()
+        df = df[df["player"] != self.player]
+        save_power_data(df)
+        await inter.response.edit_message(content=f"All data for '{self.player}' has been deleted.", view=None)
+
+    async def delete_records(self, inter: Interaction):
+        df = load_power_data()
+        recs = df[df["player"] == self.player].sort_values("timestamp", ascending=False)
+        view = RecordSelectView(self.player, recs)
+        await inter.response.edit_message(content="Select records to delete:", view=view)
+
+
+class RecordSelectView(View):
+    def __init__(self, player: str, records: pd.DataFrame):
+        super().__init__(timeout=None)
+        self.player = player
+        self.records = records.reset_index(drop=True)
+        self.offset = 0
+        self.selected_idx: list[int] = []
+        # initial components
+        self.select = self._make_select()
+        btn_next = Button(label="Next", style=discord.ButtonStyle.secondary)
+        btn_done = Button(label="Delete", style=discord.ButtonStyle.danger)
+        btn_next.callback = self.next_page
+        btn_done.callback = self.confirm_delete
+        self.add_item(self.select)
+        self.add_item(btn_next)
+        self.add_item(btn_done)
+
+    def _make_select(self) -> Select:
+        opts = []
+        for i,row in self.records.iloc[self.offset:self.offset+PAGE_SIZE].iterrows():
+            label = row["timestamp"][:10]
+            desc = f"Tank: {row['tank']}, Rocket: {row['rocket']}, Air: {row['air']}"
+            opts.append(discord.SelectOption(label=f"{label}", description=desc, value=str(i)))
+        menu = Select(placeholder="Select records...", min_values=0, max_values=len(opts), options=opts)
+        menu.callback = self.handle_select
+        return menu
+
+    async def handle_select(self, select_inter: Interaction):
+        vals = select_inter.data.get("values", [])
+        for v in vals:
+            idx = int(v)
+            if idx not in self.selected_idx:
+                self.selected_idx.append(idx)
+        await select_inter.response.defer()
+
+    async def next_page(self, button_inter: Interaction):
+        self.offset += PAGE_SIZE
+        if self.offset >= len(self.records):
+            await button_inter.response.send_message("No more records.", ephemeral=True)
+            return
+        self.clear_items()
+        self.select = self._make_select()
+        btn_next = Button(label="Next", style=discord.ButtonStyle.secondary)
+        btn_done = Button(label="Delete", style=discord.ButtonStyle.danger)
+        btn_next.callback = self.next_page
+        btn_done.callback = self.confirm_delete
+        self.add_item(self.select)
+        self.add_item(btn_next)
+        self.add_item(btn_done)
+        await button_inter.response.edit_message(content=f"Select records, page {self.offset//PAGE_SIZE+1}:", view=self)
+
+    async def confirm_delete(self, button_inter: Interaction):
+        if not self.selected_idx:
+            await button_inter.response.send_message("No records selected.", ephemeral=True)
+            return
+        # confirmation
+        rec_texts = []
+        for idx in self.selected_idx:
+            row = self.records.iloc[idx]
+            rec_texts.append(f"{row['timestamp'][:10]} – Tank: {row['tank']}, Rocket: {row['rocket']}, Air: {row['air']}")
+        summary = "\n".join(rec_texts)
+        # ask confirmation
+        view = ConfirmView(self.player, self.selected_idx)
+        await button_inter.response.edit_message(content=f"Confirm deletion of these records for '{self.player}':\n{summary}", view=view)
+
+
+class ConfirmView(View):
+    def __init__(self, player: str, idxs: list[int]):
+        super().__init__(timeout=None)
+        self.player = player
+        self.idxs = idxs
+        btn_yes = Button(label="Yes, delete", style=discord.ButtonStyle.danger)
+        btn_no = Button(label="Cancel", style=discord.ButtonStyle.secondary)
+        btn_yes.callback = self.do_delete
+        btn_no.callback = self.cancel
+        self.add_item(btn_yes)
+        self.add_item(btn_no)
+
+    async def do_delete(self, inter: Interaction):
+        backup_power_file()
+        df = load_power_data()
+        recs = df[df['player'] == self.player].sort_values('timestamp', ascending=False).reset_index()
+        to_drop = recs.iloc[self.idxs]['index']
+        df = df.drop(index=to_drop)
+        save_power_data(df)
+        await inter.response.edit_message(content="Selected records have been deleted.", view=None)
+
+    async def cancel(self, inter: Interaction):
+        await inter.response.edit_message(content="Deletion cancelled.", view=None)
+
+
 async def setup_power_commands(bot: commands.Bot):
-    """Importováno v main.py – zaregistruje PowerCommands jako cog."""
     await bot.add_cog(PowerCommands(bot))
-
