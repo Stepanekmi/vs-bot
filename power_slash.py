@@ -299,3 +299,7 @@ class RecordSelectView(View):
             opts.append(discord.SelectOption(label=date, description=desc, value=str(i)))
         sel = Select(placeholder="Select records...", min_values=0, max_values=len(opts), options=opts)
         sel.callback = self.on_select
+
+# ------------------ export deployment ------------------
+async def setup_power_commands(bot: commands.Bot):
+    await bot.add_cog(PowerCommands(bot))
