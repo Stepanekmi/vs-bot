@@ -151,11 +151,13 @@ class PowerCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     async def powerlist(self, interaction: Interaction):
         df = _pandas_read()
+        await interaction.response.defer(ephemeral=True)
         last = df.sort_values("timestamp").groupby("player", as_index=False).last()
         lines = ["**__Players:__**"]
         for pname in sorted(last['player']):
             lines.append(f"- {pname}")
-        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+        await interaction.followup.send("
+".join(lines), ephemeral=True)("\n".join(lines), ephemeral=True)
 
     # 6) powererase
     @app_commands.command(name="powererase", description="Erase player data")
