@@ -1,9 +1,8 @@
 
 import os
 import io
-import time
 import math
-from typing import Optional
+from typing import Optional, List
 
 import discord
 from discord import app_commands
@@ -115,6 +114,20 @@ def _plot_two_players(df1: pd.DataFrame, df2: pd.DataFrame, team_col: str, title
     buf.seek(0)
     return discord.File(buf, filename="compare.png")
 
+async def _send_long(interaction: discord.Interaction, header: str, lines: List[str], ephemeral: bool = False):
+    """Send long text split into 2000-char safe chunks."""
+    prefix = header + "\n" if header else ""
+    chunk = prefix
+    limit = 1900  # keep margin
+    for line in lines:
+        if len(chunk) + len(line) + 1 > limit:
+            await interaction.followup.send(chunk.rstrip(), ephemeral=ephemeral)
+            chunk = ""
+        chunk += (line + "\n")
+    if chunk.strip():
+        await interaction.followup.send(chunk.rstrip(), ephemeral=ephemeral)
+
+# ---- Cog ----
 class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -151,6 +164,7 @@ class PowerCommands(commands.Cog):
         if df_p.empty:
             await interaction.followup.send(f"⚠️ Nenašel jsem žádná data pro hráče **{player}**.")
             return
+        # Výpočet posledních Δ
         deltas = {}
         for col in ["tank", "rocket", "air", "team4"]:
             s = df_p[col].dropna().astype(float)
@@ -167,7 +181,7 @@ class PowerCommands(commands.Cog):
         ])
         await interaction.followup.send(f"**{player}** — {summary}", file=file)
 
-    @app_commands.command(name="powertopplayer", description="Top hráči podle maxima a součtu týmů")
+    @app_commands.command(name="powertopplayer", description="Seznam všech hráčů podle maxima a součtu 3 týmů")
     @app_commands.guilds(GUILD)
     async def powertopplayer(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
@@ -177,12 +191,14 @@ class PowerCommands(commands.Cog):
             return
         grp = df.groupby("player", as_index=False).agg({"tank": "max", "rocket": "max", "air": "max"}).fillna(0.0)
         grp["sum3"] = grp["tank"] + grp["rocket"] + grp["air"]
-        top_sum = grp.sort_values("sum3", ascending=False).head(10)
-        lines = [f"{i+1}. {row.player}: total={row.sum3:,.0f} (tank={row.tank:,.0f}, rocket={row.rocket:,.0f}, air={row.air:,.0f})"
-                 for i, row in top_sum.reset_index(drop=True).iterrows()]
-        await interaction.followup.send("**TOP hráči (max každého týmu, součet 3)**\n" + "\n".join(lines))
+        grp = grp.sort_values("sum3", ascending=False).reset_index(drop=True)
 
-    @app_commands.command(name="powertopplayer4", description="Top hráči včetně 4. týmu")
+        lines = [f"{i+1}. {row.player}: total={row.sum3:,.0f} (tank={row.tank:,.0f}, rocket={row.rocket:,.0f}, air={row.air:,.0f})"
+                 for i, row in grp.iterrows()]
+
+        await _send_long(interaction, "**TOP hráči (všichni, součet 3)**", lines)
+
+    @app_commands.command(name="powertopplayer4", description="Seznam všech hráčů podle maxima a součtu 4 týmů")
     @app_commands.guilds(GUILD)
     async def powertopplayer4(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
@@ -191,10 +207,12 @@ class PowerCommands(commands.Cog):
             df["team4"] = 0.0
         grp = df.groupby("player", as_index=False).agg({"tank": "max", "rocket": "max", "air": "max", "team4": "max"}).fillna(0.0)
         grp["sum4"] = grp["tank"] + grp["rocket"] + grp["air"] + grp["team4"]
-        top_sum = grp.sort_values("sum4", ascending=False).head(10)
+        grp = grp.sort_values("sum4", ascending=False).reset_index(drop=True)
+
         lines = [f"{i+1}. {row.player}: total4={row.sum4:,.0f} (t={row.tank:,.0f}, r={row.rocket:,.0f}, a={row.air:,.0f}, t4={row.team4:,.0f})"
-                 for i, row in top_sum.reset_index(drop=True).iterrows()]
-        await interaction.followup.send("**TOP hráči (max týmů, součet 4)**\n" + "\n".join(lines))
+                 for i, row in grp.iterrows()]
+
+        await _send_long(interaction, "**TOP hráči (všichni, součet 4)**", lines)
 
     @app_commands.command(name="powerplayervsplayer", description="Porovnej dva hráče podle zvoleného týmu + graf")
     @app_commands.guilds(GUILD)
@@ -245,8 +263,7 @@ class PowerCommands(commands.Cog):
         for _, row in df_p.iterrows():
             ts = pd.to_datetime(row["timestamp"]).strftime("%Y-%m-%d %H:%M")
             lines.append(f"- {ts} — t={row.get('tank', float('nan')):,.0f}, r={row.get('rocket', float('nan')):,.0f}, a={row.get('air', float('nan')):,.0f}, t4={row.get('team4', float('nan')):,.0f}")
-        text = "\n".join(lines[:50])
-        await interaction.followup.send(f"**{player} — záznamy (max 50):**\n{text}", ephemeral=True)
+        await _send_long(interaction, f"**{player} — záznamy:**", lines, ephemeral=True)
 
 async def setup_power_commands(bot: commands.Bot):
     await bot.add_cog(PowerCommands(bot))
