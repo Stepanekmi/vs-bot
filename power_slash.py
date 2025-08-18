@@ -20,12 +20,11 @@ GUILD = discord.Object(id=GUILD_ID)
 POWER_FILE = "power_data.csv"
 POWER_HEADER = ["player", "tank", "rocket", "air", "team4", "timestamp"]
 
-# When true, we fetch the latest CSV from GitHub before every read
-ALWAYS_REFRESH = os.getenv("POWER_ALWAYS_REFRESH", "1") not in ("0", "false", "False", "")
+# On reads: use local file (freshest). To force GitHub refresh on reads, set POWER_FORCE_REFRESH=1.
+FORCE_REFRESH_READS = os.getenv("POWER_FORCE_REFRESH") in ("1", "true", "True")
 
 # ---- Utilities ----
 def _ensure_power_csv():
-    """Make sure the CSV exists with a proper header."""
     needs_header = False
     if not os.path.exists(POWER_FILE):
         needs_header = True
@@ -47,16 +46,17 @@ def _ensure_power_csv():
             w = csv.writer(f)
             w.writerow(POWER_HEADER)
 
-def _refresh_from_github():
-    if ALWAYS_REFRESH:
+def _refresh_from_github_if_forced():
+    if FORCE_REFRESH_READS:
         try:
             fetch_from_repo("data/power_data.csv", POWER_FILE)
         except Exception as e:
-            print(f"⚠️ refresh power_data.csv failed: {e}")
+            print(f"⚠️ forced refresh power_data.csv failed: {e}")
 
 def _load_df() -> pd.DataFrame:
-    _refresh_from_github()
     _ensure_power_csv()
+    if FORCE_REFRESH_READS:
+        _refresh_from_github_if_forced()
     df = pd.read_csv(POWER_FILE)
     for c in POWER_HEADER:
         if c not in df.columns:
@@ -124,6 +124,23 @@ def _plot_player_series_with_labels(df: pd.DataFrame, title: str) -> discord.Fil
     buf.seek(0)
     return discord.File(buf, filename="power.png")
 
+def _delta_vs_prev_distinct(series: pd.Series):
+    s = series.dropna().astype(float).values
+    if len(s) < 2:
+        return float('nan'), float('nan'), ""
+    last = s[-1]
+    prev = None
+    for i in range(len(s)-2, -1, -1):
+        if s[i] != last:
+            prev = s[i]
+            break
+    if prev is None or prev == 0:
+        return float('nan'), float('nan'), ""
+    diff = last - prev
+    pct = diff / prev * 100.0
+    emoji = "⬆️" if diff > 0 else ("⬇️" if diff < 0 else "➡️")
+    return pct, diff, emoji
+
 class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -133,22 +150,28 @@ class PowerCommands(commands.Cog):
     @app_commands.describe(player="Jméno hráče", tank="Síla tanků (např. 1.2M)", rocket="Síla raket", air="Síla letectva", team4="Síla 4. týmu (volitelné)")
     async def powerenter(self, interaction: discord.Interaction, player: str, tank: str, rocket: str, air: str, team4: Optional[str] = None):
         await interaction.response.defer(thinking=True, ephemeral=True)
-        t = _normalize_number(tank)
-        r = _normalize_number(rocket)
-        a = _normalize_number(air)
+        t = _normalize_number(tank); r = _normalize_number(rocket); a = _normalize_number(air)
         t4 = _normalize_number(team4) if team4 is not None else math.nan
-        _refresh_from_github()  # pull latest before append
+
+        # Pull latest from GitHub first (merge-up)
+        try:
+            fetch_from_repo("data/power_data.csv", POWER_FILE)
+        except Exception as e:
+            print(f"⚠️ fetch before append failed: {e}")
+
         _ensure_power_csv()
         now = pd.Timestamp.utcnow().isoformat()
         new_row = {"player": player.strip(), "tank": t, "rocket": r, "air": a, "team4": t4, "timestamp": now}
         df = _load_df()
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
         df.to_csv(POWER_FILE, index=False)
+
         try:
             save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"powerenter: {player}")
             msg_commit = " a odeslána na GitHub"
         except Exception as e:
             msg_commit = f", ale commit na GitHub selhal: {e}"
+
         await interaction.followup.send(f"✅ Power data pro **{player}** zapsána{msg_commit}.", ephemeral=True)
 
     @app_commands.command(name="powerplayer", description="Detail vývoje power hráče + graf s hodnotami a tabulkou rozdílů")
@@ -161,14 +184,27 @@ class PowerCommands(commands.Cog):
         if df_p.empty:
             await interaction.followup.send(f"⚠️ Nenašel jsem žádná data pro hráče **{player}**.")
             return
-        deltas = {}
-        for col in ["tank", "rocket", "air", "team4"]:
-            s = df_p[col].dropna().astype(float)
-            if len(s) >= 2 and s.iloc[-2] > 0:
-                deltas[col] = (s.iloc[-1] - s.iloc[-2]) / s.iloc[-2] * 100.0
-            else:
-                deltas[col] = float("nan")
-        rows = []
+
+        t_pct, t_abs, t_e = _delta_vs_prev_distinct(df_p["tank"])
+        r_pct, r_abs, r_e = _delta_vs_prev_distinct(df_p["rocket"])
+        a_pct, a_abs, a_e = _delta_vs_prev_distinct(df_p["air"])
+        t4_pct, t4_abs, t4_e = _delta_vs_prev_distinct(df_p["team4"]) if "team4" in df_p.columns else (float('nan'), float('nan'), "")
+
+        def _fmt(pct, absv, emoji, label):
+            if math.isnan(pct):
+                return f"{label} Δ ?"
+            sign = "+" if absv >= 0 else ""
+            return f"{label} {emoji} {pct:.2f}% ({sign}{absv:.1f})"
+
+        headline = " • ".join([
+            _fmt(t_pct, t_abs, t_e, "tank"),
+            _fmt(r_pct, r_abs, r_e, "rocket"),
+            _fmt(a_pct, a_abs, a_e, "air"),
+            _fmt(t4_pct, t4_abs, t4_e, "team4") if not math.isnan(t4_pct) else "team4 Δ ?",
+        ])
+
+        # Per-entry lines
+        lines = []
         prev = None
         for _, row in df_p.iterrows():
             ts = pd.to_datetime(row["timestamp"]).strftime("%Y-%m-%d")
@@ -182,17 +218,12 @@ class PowerCommands(commands.Cog):
                     chg = (val - prev[col]) / prev[col] * 100.0
                     s += f" ({chg:+.2f}%)"
                 parts.append(s)
-            rows.append(f"- {ts} — " + ", ".join(parts))
+            lines.append(f"- {ts} — " + ", ".join(parts))
             prev = row
+
         file = _plot_player_series_with_labels(df_p, f"Vývoj {player}")
-        headline = " • ".join([
-            f"tank Δ {deltas['tank']:.2f}%" if not math.isnan(deltas["tank"]) else "tank Δ ?",
-            f"rocket Δ {deltas['rocket']:.2f}%" if not math.isnan(deltas["rocket"]) else "rocket Δ ?",
-            f"air Δ {deltas['air']:.2f}%" if not math.isnan(deltas["air"]) else "air Δ ?",
-            f"team4 Δ {deltas['team4']:.2f}%" if not math.isnan(deltas["team4"]) else "team4 Δ ?",
-        ])
         await interaction.followup.send(f"**{player}** — {headline}", file=file)
-        await _send_long(interaction, f"**{player} — záznamy & rozdíly:**", rows, ephemeral=False)
+        await _send_long(interaction, f"**{player} — záznamy & rozdíly:**", lines, ephemeral=False)
 
     @app_commands.command(name="powertopplayer", description="Seznam všech hráčů podle maxima a součtu 3 týmů")
     @app_commands.guilds(GUILD)
