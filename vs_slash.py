@@ -2,9 +2,52 @@ import pandas as pd
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord import Interaction, TextStyle
 import matplotlib.pyplot as plt
 import io
 from github_sync import save_to_github
+
+def _normalize_date(date_str: str) -> str:
+    """Normalize input date to YYYY-MM-DD. Accepts '10.5.25', '10.05.2025', '2025-05-10'."""
+    s = str(date_str).strip()
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y"):
+        try:
+            return datetime.datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    # Heuristic d.m.yy
+    try:
+        parts = re.split(r"[.\-/]", s)
+        if len(parts) == 3:
+            d, m, y = parts
+            d = int(d); m = int(m); y = int(y)
+            if y < 100: y += 2000
+            return datetime.date(y, m, d).strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return s
+
+def _parse_date_safe(s: str):
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y"):
+        try:
+            return datetime.datetime.strptime(s, fmt).date()
+        except Exception:
+            pass
+    m = re.match(r"^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$", str(s))
+    if m:
+        d, mo, y = map(int, m.groups())
+        if y < 100: y += 2000
+        return datetime.date(y, mo, d)
+    return None
+
+def _latest_date_from_series(series):
+    dates = []
+    for s in series.dropna().astype(str):
+        p = _parse_date_safe(s)
+        if p: dates.append(p)
+    if dates:
+        return max(dates).strftime("%Y-%m-%d")
+    return series.dropna().astype(str).max() if not series.empty else None
 
 # ID of your server
 GUILD_ID = 1231529219029340234
@@ -34,6 +77,7 @@ class VSCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     @app_commands.describe(date="Date of the match (e.g., 10.5.25)", tag="Alliance tag")
     async def vs_start(self, interaction: discord.Interaction, date: str, tag: str):
+    date = _normalize_date(str(date))
         self.bot.upload_session = {"date": date, "tag": tag, "records": {}}
         await interaction.response.send_message(f"✅ Started upload for {date} ({tag}).")
 
@@ -58,28 +102,27 @@ class VSCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     async def vs_aliance(self, interaction: discord.Interaction):
         df = pd.read_csv(DB_FILE)
-        tags = df["tag"].unique()
-        await interaction.response.send_message("🔖 Alliance tags: " + ", ".join(tags))
+        tags = sorted(df["tag"].dropna().unique())
+        await interaction.response.send_message("🛡️ Alliances: " + ", ".join(tags))
 
     @app_commands.command(name="vs_stats", description="Show stats for a player")
     @app_commands.guilds(GUILD)
-    @app_commands.describe(player="Name of the player", graph="Send chart")
+    @app_commands.describe(player="Player name", graph="Include graph")
     async def vs_stats(self, interaction: discord.Interaction, player: str, graph: bool = False):
         df = pd.read_csv(DB_FILE)
-        df_player = df[df["name"].str.lower() == player.lower()]
-        if df_player.empty:
-            return await interaction.response.send_message("⚠️ No data for this player.")
-        total_points = df_player["points"].sum()
-        matches = len(df_player)
-        msg = f"📊 Stats for **{player}**\nTotal: {total_points:,} pts\nMatches: {matches}"
+        df_p = df[df["name"].str.lower() == player.lower()]
+        if df_p.empty:
+            return await interaction.response.send_message(f"No stats found for **{player}**.")
+        stats = df_p.groupby("date")["points"].sum().reset_index().sort_values("date")
+        lines = [f"{row['date']}: {row['points']:,}" for _, row in stats.iterrows()]
+        msg = "📊 Stats for **{}**:\n".format(player) + "\n".join(lines)
         if graph:
             await interaction.response.defer(thinking=True)
-            df_grouped = df_player.groupby("date")["points"].sum().reset_index()
             fig, ax = plt.subplots()
-            ax.plot(df_grouped["date"], df_grouped["points"], marker="o")
-            ax.set_title(f"{player} – Performance Over Time")
-            ax.set_xlabel("Date"); ax.set_ylabel("Points")
-            buf = io.BytesIO(); plt.savefig(buf, format="png"); buf.seek(0)
+            ax.plot(stats["date"], stats["points"], marker="o")
+            ax.set_title(f"{player} stats")
+            buf = io.BytesIO()
+            plt.savefig(buf, format="png"); buf.seek(0)
             await interaction.followup.send(msg)
             await interaction.followup.send(file=discord.File(buf, "vs_stats.png"))
             plt.close()
@@ -94,13 +137,13 @@ class VSCommands(commands.Cog):
         latest = df["date"].max()
         df_day = df[df["date"] == latest]
         top = df_day.groupby("name")["points"].sum().reset_index().sort_values(by="points", ascending=False).head(10)
-        lines = [f"{i+1}. {row['name']} – {row['points']:,}" for i, row in top.iterrows()]
+        lines = [f"{rank}. {row['name']} – {row['points']:,}" for rank, (_, row) in enumerate(top.iterrows(), start=1)]
         msg = f"🏆 Top players for {latest}\n" + "\n".join(lines)
         if graph:
             await interaction.response.defer(thinking=True)
             fig, ax = plt.subplots()
             ax.barh(top["name"], top["points"])
-            ax.set_title(f"Top 10 Players ({latest})")
+            ax.set_title(f"Top 10 for {latest}")
             buf = io.BytesIO(); plt.savefig(buf, format="png"); buf.seek(0)
             await interaction.followup.send(msg)
             await interaction.followup.send(file=discord.File(buf, "vs_top_day.png"))
@@ -108,14 +151,14 @@ class VSCommands(commands.Cog):
         else:
             await interaction.response.send_message(msg)
 
-    @app_commands.command(name="vs_top", description="Show top players for an alliance tag")
+    @app_commands.command(name="vs_top", description="Show top players by alliance tag")
     @app_commands.guilds(GUILD)
-    @app_commands.describe(tag="Alliance tag", graph="Send chart")
+    @app_commands.describe(tag="Alliance tag", graph="Include graph")
     async def vs_top(self, interaction: discord.Interaction, tag: str, graph: bool = False):
         df = pd.read_csv(DB_FILE)
         df_tag = df[df["tag"] == tag]
         top = df_tag.groupby("name")["points"].sum().reset_index().sort_values(by="points", ascending=False).head(10)
-        lines = [f"{i+1}. {row['name']} – {row['points']:,}" for i, row in top.iterrows()]
+        lines = [f"{rank}. {row['name']} – {row['points']:,}" for rank, (_, row) in enumerate(top.iterrows(), start=1)]
         msg = f"🏅 Top players for {tag}\n" + "\n".join(lines)
         if graph:
             await interaction.response.defer(thinking=True)
@@ -129,7 +172,7 @@ class VSCommands(commands.Cog):
         else:
             await interaction.response.send_message(msg)
 
-    @app_commands.command(name="vs_train", description="Send top player from latest day to info channel")
+    @app_commands.command(name="vs_train", description="Send top player from latest day to TRAIN channel")
     @app_commands.guilds(GUILD)
     async def vs_train(self, interaction: discord.Interaction):
         df = pd.read_csv(DB_FILE)
@@ -143,50 +186,64 @@ class VSCommands(commands.Cog):
             await ch.send(f"🏆 TRAIN: {row['name']} – {row['points']:,} pts")
         await interaction.response.send_message("✅ Sent top TRAIN player to info channel.")
 
-    @app_commands.command(name="vs_r4", description="Send top 2 R4 players for tag")
+    @app_commands.command(name="vs_r4", description="Send top 2 R4 players for a tag")
     @app_commands.guilds(GUILD)
     @app_commands.describe(tag="Alliance tag")
     async def vs_r4(self, interaction: discord.Interaction, tag: str):
         df = pd.read_csv(DB_FILE)
         r4_list = load_r4_list()
         df_tag = df[df["tag"] == tag]
-        df_tag = df_tag[~df_tag["name"].isin(r4_list)]
+        df_tag = df_tag[df_tag["name"].isin(r4_list)]
         top2 = df_tag.groupby("name")["points"].sum().reset_index().sort_values(by="points", ascending=False).head(2)
         ch = self.bot.get_channel(1231533602194460752)
         for _, row in top2.iterrows():
             await ch.send(f"🥇 R4: {row['name']} – {row['points']:,} pts")
         await interaction.response.send_message("✅ Sent top 2 R4 players to info channel.")
 
-    @app_commands.command(name="r4list", description="Set ignored R4 player names")
+    @app_commands.command(name="vs_remove", description="Remove all VS entries on given date")
     @app_commands.guilds(GUILD)
-    @app_commands.describe(players="Comma-separated player names")
-    async def r4list(self, interaction: discord.Interaction, players: str):
-        names = [n.strip() for n in players.split(",") if n.strip()]
-        with open(R4_LIST_FILE, "w") as f:
-            for name in names:
-                f.write(name + "\n")
-        save_to_github(R4_LIST_FILE, f"data/{R4_LIST_FILE}", "Update R4 list")
-        await interaction.response.send_message(f"✅ R4 list updated: {', '.join(names)}")
+    @app_commands.describe(date="Date of the entry to remove (YYYY-MM-DD)")
+    async def vs_remove(self, interaction: discord.Interaction, date: str):
+        df = pd.read_csv(DB_FILE)
+        mask = df["date"].str.startswith(date)
+        if not mask.any():
+            return await interaction.response.send_message(
+                f"No VS entries found for date **{date}**.", ephemeral=True
+            )
+        df = df[~mask]
+        df.to_csv(DB_FILE, index=False)
+        save_to_github(DB_FILE, f"data/{DB_FILE}", f"Removed VS entries on {date}")
+        await interaction.response.send_message(
+            f"✅ All VS entries on **{date}** have been removed.", ephemeral=True
+        )
 
     @app_commands.command(name="info", description="Show all bot commands")
     @app_commands.guilds(GUILD)
     async def info(self, interaction: discord.Interaction):
         help_text = (
-            "**Slash Commands**\n"
-            "/vs_start <date> <tag> – start uploading\n"
-            "/vs_finish – save records\n"
-            "/vs_aliance – list tags\n"
-            "/vs_stats <player> [graph] – stats for player\n"
-            "/vs_top_day [graph] – top latest day\n"
-            "/vs_top <tag> [graph] – top by tag\n"
-            "/vs_train – send top to TRAIN channel\n"
-            "/vs_r4 <tag> – send top 2 to R4 channel\n"
+            "**VS Commands:**\n"
+            "/vs_start <date> <tag> – start uploading results\n"
+            "/vs_finish – finish and save results\n"
+            "/vs_aliance – list alliance tags\n"
+            "/vs_stats <player> [graph] – show stats for player\n"
+            "/vs_top_day [graph] – show top players for latest day\n"
+            "/vs_top <tag> [graph] – show top players by alliance tag\n"
+            "/vs_train – send top player to TRAIN channel\n"
+            "/vs_r4 <tag> – send top two players to R4 channel\n"
             "/r4list <players> – set ignored R4 list\n"
-            "/powerenter <player> <tank> <rocket> <air> – enter power data\n"
-            "/powerplayer <player> – chart power over time\n"
-            "/powertopplayer – show all power rankings"
+            "/vs_remove <date> – remove all VS entries on given date\n\n"
+            "**Power Commands:**\n"
+            "/powerenter player tank rocket air [team4] – enter power data\n"
+            "/powertopplayer – show all power rankings (3 teams)\n"
+            "/powertopplayer4 – show all power rankings (incl. optional 4th team)\n"
+            "/powererase – erase power records (last / all)\n"
+            "/powerlist player – list & optionally delete power entries\n"
+            "/powerplayervsplayer player1 player2 team – compare two players by selected team\n/stormsetup teams:<#> – create balanced storm teams\n"
+            ""
+
+            "/info – show this help message\n"
         )
-        await interaction.response.send_message(help_text)
+        await interaction.response.send_message(help_text, ephemeral=True)
 
 async def setup_vs_commands(bot: commands.Bot):
     await bot.add_cog(VSCommands(bot))

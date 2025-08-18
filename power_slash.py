@@ -1,146 +1,259 @@
-# power_slash.py – kompletní verze 2025‑08‑03
-# -------------------------------------------------------------
-# Slash příkazy: powerenter, powerplayer, powerplayervsplayer,
-# powertopplayer, powerlist, powererase, stormsetup, info
-# -------------------------------------------------------------
-
-import os, io, logging
-from datetime import datetime
 import pandas as pd
-import matplotlib.pyplot as plt
 import discord
-from discord import app_commands, Interaction, TextStyle
+from discord import app_commands
 from discord.ext import commands
-from discord.ui import Modal, TextInput
+import matplotlib.pyplot as plt
+import io
+from datetime import datetime
 from github_sync import save_to_github
 
-# ------------------ konfigurace ------------------
+# ID of your server
 GUILD_ID = 1231529219029340234
 GUILD = discord.Object(id=GUILD_ID)
+
 POWER_FILE = "power_data.csv"
+POWER_HEADER = ["player","tank","rocket","air","team4","timestamp"]
 
-if not os.path.exists(POWER_FILE):
-    pd.DataFrame(columns=["player","tank","rocket","air","timestamp"]).to_csv(POWER_FILE, index=False)
+def _ensure_power_csv():
+    import csv, os
+    if not os.path.exists(POWER_FILE) or os.path.getsize(POWER_FILE) == 0:
+        with open(POWER_FILE, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(POWER_HEADER)
 
-logging.basicConfig(level=logging.INFO)
 
-# ------------------ helpery ----------------------
+def normalize(val: str) -> float:
+    try:
+        return round(float(val.strip().upper().rstrip("M")), 2)
+    except:
+        return 0.0
 
-def norm(v: str)->float:
-    try: return round(float(v.strip().upper().rstrip("M")),2)
-    except Exception: return 0.0
-
-def _icon(t:str)->str:
-    return {"tank":"🛡️","rocket":"🚀","air":"✈️","team4":"⚙️"}.get(t,"•")
-
-def _h(txt:str)->str: return f"**__{txt}__**"
-
-def _pandas_read():
-    df=pd.read_csv(POWER_FILE)
-    df["timestamp"]=pd.to_datetime(df["timestamp"],errors="coerce")
-    return df.dropna(subset=["timestamp"])
-
-# ------------------ Cog --------------------------
 class PowerCommands(commands.Cog):
-    def __init__(self,bot:commands.Bot):
-        self.bot=bot
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
 
-    # -------- /powerenter --------
-    @app_commands.command(name="powerenter",description="Ulož sílu týmů hráče")
+    @app_commands.command(name="powerenter", description="Enter your team strengths (optional 4th team)")
     @app_commands.guilds(GUILD)
-    async def powerenter(self,inter:Interaction,player:str,tank:str,rocket:str,air:str,team4:str|None=None):
-        df=_pandas_read()
-        new={"player":player,"tank":norm(tank),"rocket":norm(rocket),"air":norm(air),"timestamp":datetime.utcnow().isoformat()}
-        if team4: new["team4"]=norm(team4)
-        df=pd.concat([df,pd.DataFrame([new])],ignore_index=True)
-        df.to_csv(POWER_FILE,index=False)
-        save_to_github(POWER_FILE,f"data/{POWER_FILE}",f"Power data for {player}")
-        await inter.response.send_message("✅ Uloženo.",ephemeral=True)
+    @app_commands.describe(
+        player="Name of the player",
+        tank="Strength of tank team (M)",
+        rocket="Strength of rocket team (M)",
+        air="Strength of air team (M)",
+        team4="(Optional) Strength of fourth team (M)"
+    )
+    async def powerenter(self, interaction: discord.Interaction,
+                         player: str, tank: str, rocket: str, air: str, team4: str = None):
+        df = _ensure_power_csv(); pd.read_csv(POWER_FILE)
+        new = {"player": player, "tank": normalize(tank),
+               "rocket": normalize(rocket), "air": normalize(air),
+               "timestamp": datetime.utcnow().isoformat()}
+        if team4:
+            new["team4"] = normalize(team4)
+        df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
+        df.to_csv(POWER_FILE, index=False)
+        save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Power data for {player}")
+        msg = (f"✅ Data saved for **{player}**:\n"
+               f"Tank: {new['tank']:.2f}M\n"
+               f"Rocket: {new['rocket']:.2f}M\n"
+               f"Air: {new['air']:.2f}M")
+        if team4:
+            msg += f"\nTeam4: {new['team4']:.2f}M"
+        await interaction.response.send_message(msg, ephemeral=True)
 
-    # -------- /powerplayer -------
-    @app_commands.command(name="powerplayer",description="Historie síly hráče")
-    @app_commands.guilds(GUILD)
-    async def powerplayer(self,inter:Interaction,player:str):
-        await inter.response.defer(thinking=True,ephemeral=True)
-        df=_pandas_read()
-        dfp=df[df["player"].str.lower()==player.lower()].sort_values("timestamp")
-        if dfp.empty:
-            return await inter.followup.send("⚠️ Hráč nenalezen.",ephemeral=True)
-        lines=[_h(player)]
-        for t in ["tank","rocket","air"]:
-            vals=dfp[t].tolist(); parts=[f"{vals[0]:.2f}"]
-            for i in range(1,len(vals)):
-                delta=100*(vals[i]-vals[i-1])/vals[i-1] if vals[i-1] else 0
-                parts.append(f"→ +{delta:.1f}% → {vals[i]:.2f}")
-            lines.append(f"{_icon(t)} {t.upper()}: "+" ".join(parts))
-        plt.figure(figsize=(8,4))
-        for col in ["tank","rocket","air"]:
-            plt.plot(dfp["timestamp"],dfp[col],marker="o",label=col)
-        plt.legend();plt.tight_layout();buf=io.BytesIO();plt.savefig(buf,format="png");buf.seek(0);plt.close()
-        await inter.followup.send("\n".join(lines),ephemeral=True)
-        await inter.followup.send(file=discord.File(buf,"power.png"),ephemeral=True)
 
-    # -------- /powertopplayer ----
-    @app_commands.command(name="powertopplayer",description="Top hráči (3 týmy)")
+    @app_commands.command(name="powerplayer", description="Show a player's strengths over time")
     @app_commands.guilds(GUILD)
-    async def powertopplayer(self,inter:Interaction):
-        df=_pandas_read(); last=df.sort_values("timestamp").groupby("player",as_index=False).last()
-        last["max_team"]=last[["tank","rocket","air"]].max(axis=1)
-        last["total"]=last[["tank","rocket","air"]].sum(axis=1)
-        top_max=last.sort_values("max_team",ascending=False).reset_index(drop=True)
-        top_tot=last.sort_values("total",ascending=False).reset_index(drop=True)
-        msg=[_h("🥇 Podle nejsilnějšího týmu")]
-        msg+= [f"{i+1}. {r['player']} – {r['max_team']:.2f}M" for i,r in top_max.iterrows()]
-        msg+=["",_h("🏆 Podle celkové síly")]
-        msg+= [f"{i+1}. {r['player']} – {r['total']:.2f}M" for i,r in top_tot.iterrows()]
-        await inter.response.send_message("\n".join(msg),ephemeral=True)
+    @app_commands.describe(player="Name of the player")
+    async def powerplayer(self, interaction: discord.Interaction, player: str):
+        await interaction.response.defer(thinking=True)
+        df = _ensure_power_csv(); pd.read_csv(POWER_FILE)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
+        if df_p.empty:
+            return await interaction.followup.send("⚠️ Player not found.", ephemeral=True)
 
-    # -------- /powerplayervsplayer
-    @app_commands.command(name="powerplayervsplayer",description="Porovnej dva hráče podle týmu")
+        msg_lines = []
+        icons = {"tank": "🛡️", "rocket": "🚀", "air": "✈️"}
+        for team in ["tank", "rocket", "air"]:
+            values = df_p[team].tolist()
+            if not values:
+                continue
+            line = f"{icons[team]} {team.upper()}:\n"
+            parts = [f"{values[0]:.2f}"]
+            for i in range(1, len(values)):
+                prev, curr = values[i-1], values[i]
+                if prev > 0:
+                    delta = 100 * (curr - prev) / prev
+                else:
+                    delta = 0.0
+                parts.append(f"→ +{delta:.2f}% → {curr:.2f}")
+            if len(values) > 1 and values[0] > 0:
+                total_delta = 100 * (values[-1] - values[0]) / values[0]
+            else:
+                total_delta = 0.0
+            line += " ".join(parts) + f" | Total: +{total_delta:.2f}%"
+            msg_lines.append(line)
+
+        full_msg = "\n\n".join(msg_lines)
+
+        plt.figure(figsize=(8, 4))
+        for col in ["tank", "rocket", "air"]:
+            plt.plot(df_p["timestamp"], df_p[col], marker="o", label=col.capitalize())
+            for x, y in zip(df_p["timestamp"], df_p[col]):
+                plt.text(x, y, f"{y:.2f}", fontsize=8, ha='center', va='bottom')
+
+        plt.legend()
+        plt.xlabel("Time")
+        plt.ylabel("Strength (M)")
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
+        plt.close()
+
+        await interaction.followup.send(full_msg)
+        await interaction.followup.send(file=discord.File(buf, "power_graph.png"))
+    @app_commands.command(name="powertopplayer", description="Show top players by power (3 teams)")
     @app_commands.guilds(GUILD)
-    async def powerplayervsplayer(self,inter:Interaction,player1:str,player2:str,team:str):
-        team=team.lower()
-        if team not in {"tank","rocket","air","team4"}:
-            return await inter.response.send_message("Neznámý tým.",ephemeral=True)
-        df=_pandas_read(); last=df.sort_values("timestamp").groupby("player",as_index=False).last()
-        p1=last[last["player"].str.lower()==player1.lower()]
-        p2=last[last["player"].str.lower()==player2.lower()]
+    async def powertopplayer(self, interaction: discord.Interaction):
+        df = _ensure_power_csv(); pd.read_csv(POWER_FILE)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df_last = df.sort_values("timestamp").groupby("player", as_index=False).last()
+        df_last["max_team"] = df_last[["tank","rocket","air"]].max(axis=1)
+        df_last["total"]    = df_last[["tank","rocket","air"]].sum(axis=1)
+        sorted_max = df_last.sort_values("max_team", ascending=False)
+        sorted_total = df_last.sort_values("total", ascending=False)
+        msg = "**🥇 All by single-team strength**\n" + "\n".join(
+            f"{i+1}. {r['player']} – {r['max_team']:.2f}M"
+            for i, r in sorted_max.iterrows()
+        )
+        msg += "\n\n**🏆 All by total strength**\n" + "\n".join(
+            f"{i+1}. {r['player']} – {r['total']:.2f}M"
+            for i, r in sorted_total.iterrows()
+        )
+        await interaction.response.send_message(msg, ephemeral=True)
+
+    @app_commands.command(name="powerplayervsplayer", description="Compare two players by a selected team")
+    @app_commands.guilds(GUILD)
+    @app_commands.describe(
+        player1="First player name",
+        player2="Second player name",
+        team="Team to compare (tank, rocket, air, team4)"
+    )
+    async def powerplayervsplayer(self, interaction: discord.Interaction,
+                                  player1: str, player2: str, team: str):
+        df = _ensure_power_csv(); pd.read_csv(POWER_FILE)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        team = team.lower()
+
+        # Kontrola, že tým existuje
+        if team not in df.columns:
+            return await interaction.response.send_message(
+                f"⚠️ Unknown team '{team}'. Choose from tank, rocket, air, team4.", ephemeral=True
+            )
+
+        # Najdi poslední záznamy obou hráčů
+        last = df.sort_values("timestamp").groupby("player", as_index=False).last()
+        p1 = last[last["player"].str.lower() == player1.lower()]
+        p2 = last[last["player"].str.lower() == player2.lower()]
         if p1.empty or p2.empty:
-            return await inter.response.send_message("Hráč nenalezen.",ephemeral=True)
-        v1,v2=p1.iloc[0][team],p2.iloc[0][team]; diff=v1-v2
-        winner=player1 if diff>0 else player2 if diff<0 else "Remíza"
-        header=_h(f"{team.upper()} – {player1} vs {player2}")
-        msg=f"{header}\n{player1}: {v1:.2f}M\n{player2}: {v2:.2f}M\nRozdíl: {abs(diff):.2f}M → **{winner}**"
-        df1=df[df["player"].str.lower()==player1.lower()].sort_values("timestamp")
-        df2=df[df["player"].str.lower()==player2.lower()].sort_values("timestamp")
-        plt.figure(figsize=(8,4)); plt.plot(df1["timestamp"],df1[team],marker="o",label=player1)
-        plt.plot(df2["timestamp"],df2[team],marker="o",label=player2); plt.legend(); plt.tight_layout()
-        buf=io.BytesIO(); plt.savefig(buf,format="png"); buf.seek(0); plt.close()
-        await inter.response.send_message(msg,ephemeral=True)
-        await inter.followup.send(file=discord.File(buf,"compare.png"),ephemeral=True)
+            return await interaction.response.send_message(
+                "⚠️ One or both players not found.", ephemeral=True
+            )
+        val1 = p1.iloc[0][team]
+        val2 = p2.iloc[0][team]
+        diff = abs(val1 - val2)
+        if val1 > val2:
+            winner = player1
+        elif val2 > val1:
+            winner = player2
+        else:
+            winner = "Tie"
 
-    # -------- PlayerSelectView ----
-    class PlayerSelectView(discord.ui.View):
-        """Interaktivní dvoukrokový picker hráčů."""
-        def __init__(self,bot:commands.Bot,teams:int,players:list[str]):
-            super().__init__(timeout=180)
-            self.bot,self.teams,self.players=bot,teams,players
-            self.selected_main: list[str]=[]; self.selected_subs: list[str]=[]
-            self.main_candidates=players[:20]; self.sub_candidates=players[20:]
-            self.add_item(self._mk_select(self.main_candidates,"Pick main players (max 20)",self.main_sel))
-            nxt=discord.ui.Button(label="Next",style=discord.ButtonStyle.primary)
-            nxt.callback=self.to_subs; self.add_item(nxt)
+        msg = (f"🔍 Comparing **{team.capitalize()}** strength:\n"
+               f"{player1}: {val1:.2f}M\n"
+               f"{player2}: {val2:.2f}M\n"
+               f"Difference: {diff:.2f}M\n"
+               f"Winner: {winner}")
 
-        def _mk_select(self,opts,ph,cb):
-            sel=discord.ui.Select(placeholder=ph,min_values=0,max_values=min(20,len(opts)),options=[discord.SelectOption(label=p) for p in opts]); sel.callback=cb; return sel
-        async def main_sel(self,inter): self.selected_main=self.children[0].values; await inter.response.defer()
-        async def to_subs(self,inter):
-            self.clear_items(); subs=[p for p in self.sub_candidates if p not in self.selected_main]
-            self.add_item(self._mk_select(subs,"Pick additional players",self.sub_sel))
-            done=discord.ui.Button(label="Done",style=discord.ButtonStyle.success); done.callback=self.finish; self.add
+        # Přidej GRAF progressu obou hráčů
+        df1 = df[df["player"].str.lower() == player1.lower()].sort_values("timestamp")
+        df2 = df[df["player"].str.lower() == player2.lower()].sort_values("timestamp")
 
-# ------------------ export ------------------
+        plt.figure(figsize=(8,4))
+        plt.plot(df1["timestamp"], df1[team], marker="o", label=player1)
+        plt.plot(df2["timestamp"], df2[team], marker="o", label=player2)
+        plt.xlabel("Time")
+        plt.ylabel(f"{team.capitalize()} Strength (M)")
+        plt.title(f"{team.capitalize()} progress: {player1} vs {player2}")
+        plt.legend()
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
+        plt.close()
+
+        # Odpověď pošle text i graf
+        await interaction.response.send_message(msg, ephemeral=True)
+        await interaction.followup.send(file=discord.File(buf, "progress.png"))
+
+    @app_commands.command(name="powertopplayer4", description="Show top players by power (all 4 teams)")
+    @app_commands.guilds(GUILD)
+    async def powertopplayer4(self, interaction: discord.Interaction):
+        df = _ensure_power_csv(); pd.read_csv(POWER_FILE)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        if "team4" not in df.columns:
+            return await interaction.response.send_message("No data for team4.", ephemeral=True)
+        df_last = df.sort_values("timestamp").groupby("player", as_index=False).last()
+        df_last["max_team"] = df_last[["tank","rocket","air","team4"]].max(axis=1)
+        df_last["total"]    = df_last[["tank","rocket","air","team4"]].sum(axis=1)
+        sorted_max = df_last.sort_values("max_team", ascending=False)
+        sorted_total = df_last.sort_values("total", ascending=False)
+        msg = "**🥇 All by single-team strength (incl. team4)**\n" + "\n".join(
+            f"{i+1}. {r['player']} – {r['max_team']:.2f}M"
+            for i, r in sorted_max.iterrows()
+        )
+        msg += "\n\n**🏆 All by total strength (incl. team4)**\n" + "\n".join(
+            f"{i+1}. {r['player']} – {r['total']:.2f}M"
+            for i, r in sorted_total.iterrows()
+        )
+        await interaction.response.send_message(msg, ephemeral=True)
+
+    @app_commands.command(name="powererase", description="Erase all power records for a player")
+    @app_commands.guilds(GUILD)
+    @app_commands.describe(player="Name of the player")
+    async def powererase(self, interaction: discord.Interaction, player: str):
+        df = _ensure_power_csv(); pd.read_csv(POWER_FILE)
+        n_before = len(df)
+        df = df[df["player"].str.lower() != player.lower()]
+        n_removed = n_before - len(df)
+        df.to_csv(POWER_FILE, index=False)
+        save_to_github(POWER_FILE, f"data/{POWER_FILE}", f"Erased all power records for {player}")
+        await interaction.response.send_message(
+            f"✅ Erased {n_removed} records for **{player}**.", ephemeral=True
+        )
+
+    @app_commands.command(name="powerlist", description="List all power records for a player (with option to delete)")
+    @app_commands.guilds(GUILD)
+    @app_commands.describe(player="Name of the player")
+    async def powerlist(self, interaction: discord.Interaction, player: str):
+        df = _ensure_power_csv(); pd.read_csv(POWER_FILE)
+        df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
+        if df_p.empty:
+            return await interaction.response.send_message(
+                f"⚠️ No records found for **{player}**.", ephemeral=True
+            )
+        lines = []
+        for i, row in df_p.iterrows():
+            s = f"{row['timestamp'][:16]} | Tank: {row['tank']:.2f}M | Rocket: {row['rocket']:.2f}M | Air: {row['air']:.2f}M"
+            if "team4" in row:
+                s += f" | Team4: {row['team4']:.2f}M"
+            lines.append(s)
+        await interaction.response.send_message(
+            f"**Records for {player}:**\n" + "\n".join(lines), ephemeral=True
+        )
+
 async def setup_power_commands(bot: commands.Bot):
-    """Importováno v main.py – zaregistruje PowerCommands jako cog."""
     await bot.add_cog(PowerCommands(bot))
-

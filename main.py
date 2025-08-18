@@ -1,97 +1,92 @@
-import os, sys, time, threading, requests, logging, traceback
+import os
+import requests
+import time  # for back‑off
+
+# Diagnostic prints
+print("👀 RUNNING UPDATED MAIN.PY")
 import discord
-from discord.ext import commands
+print("🔍 discord.py version:", discord.__version__)
 
-from power_slash import setup_power_commands
-from keepalive import app
-
-# ───────────── logging ─────────────
-logging.basicConfig(
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    level=logging.INFO,
-)
-
-# ───────────── GitHub fetch (beze změny) ─────────────
-github_owner = os.getenv("GH_OWNER")
-github_repo  = os.getenv("GH_REPO")
-BRANCH       = "main"
-GITHUB_REPO  = f"{github_owner}/{github_repo}"
+# Fetch persisted data from GitHub
+GITHUB_REPO = "Stepanekmi/vs-data-store"
+BRANCH = "main"
 
 def fetch_file(repo_path: str, local_path: str):
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{BRANCH}/{repo_path}"
     try:
-        r = requests.get(url, timeout=15); r.raise_for_status()
-        with open(local_path, "wb") as f: f.write(r.content)
-        logging.info("✅ Staženo %s", repo_path)
+        r = requests.get(url)
+        if r.status_code == 200:
+            with open(local_path, "wb") as f:
+                f.write(r.content)
+            print(f"✅ Fetched {repo_path}")
+        else:
+            print(f"⚠️ Failed to fetch {repo_path}: HTTP {r.status_code}")
     except Exception as e:
-        logging.warning("⚠️ Nelze stáhnout %s: %s", repo_path, e)
+        print(f"❌ Exception fetching {repo_path}: {e}")
 
-for path in ["data/vs_data.csv", "data/power_data.csv", "data/r4_list.txt"]:
-    fetch_file(path, path.split("/")[-1])
+# Ensure files are loaded before bot starts
+fetch_file("data/vs_data.csv", "vs_data.csv")
+fetch_file("data/power_data.csv", "power_data.csv")
+fetch_file("data/r4_list.txt", "r4_list.txt")
 
-# ───────────── tokeny a ID ─────────────
-try:
-    DISCORD_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
-    GH_TOKEN      = os.environ["GH_TOKEN"]
-except KeyError as e:
-    logging.critical("❌ Chybí env var %s, končím.", e.args[0]); sys.exit(1)
+from discord.ext import commands
+from power_slash import setup_power_commands
+from vs_slash import setup_vs_commands
+from vs_text_listener import setup_vs_text_listener
+import threading
+from keepalive import app
 
-APPLICATION_ID = int(os.getenv("APPLICATION_ID", "1371568333333332118"))
-GUILD_ID       = int(os.getenv("GUILD_ID",       "1231529219029340234"))
+# Discord IDs
+APPLICATION_ID = 1371568333333332118
+GUILD_ID       = 1231529219029340234
+TOKEN          = os.getenv("DISCORD_TOKEN")
 
-# ───────────── globální handler chyb slash-příkazů ─────────────
-async def on_app_error(
-    inter: discord.Interaction,
-    error: discord.app_commands.AppCommandError
-):
-    logging.error("Slash error: %s", error, exc_info=error)
-    if not inter.response.is_done():
-        await inter.response.send_message("⚠️ Interní chyba příkazu.", ephemeral=True)
-
-# ───────────── Discord bot ─────────────
-intents = discord.Intents.default(); intents.message_content = True
+intents = discord.Intents.default()
+intents.message_content = True
 
 class MyBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents,
-                         application_id=APPLICATION_ID)
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            application_id=APPLICATION_ID
+        )
 
     async def setup_hook(self):
-        try:
-            await setup_power_commands(self)
-            self.tree.error(on_app_error)
-            logging.info("✅ power commands loaded")
-        except Exception:
-            logging.critical("❌ setup_power_commands failed")
-            traceback.print_exc(); return               # dál už nesyncujeme
-
-        try:
-            synced = await self.tree.sync(guild=discord.Object(id=GUILD_ID))
-            logging.info("✅ Slash commands synced: %d", len(synced))
-        except Exception:
-            logging.critical("❌ tree.sync failed")
-            traceback.print_exc()
+        print("⚙️ setup_hook spuštěn…")
+        await setup_power_commands(self)
+        await setup_vs_commands(self)
+        setup_vs_text_listener(self)
+        # Sync slash commands to guild
+        await self.tree.sync(guild=discord.Object(id=GUILD_ID))
+        print(f"✅ Slash commands synced for GUILD_ID {GUILD_ID}")
 
 bot = MyBot()
 
 @bot.event
 async def on_ready():
-    logging.info("🔓 Přihlášen jako %s (ID %s)", bot.user, bot.user.id)
+    print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
+    print("------")
 
-# ───────────── Flask keep-alive ─────────────
+# Keepalive server for UptimeRobot
 threading.Thread(
-    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000))),
-    daemon=True
+    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
 ).start()
 
-# ───────────── spuštění bota ─────────────
-logging.info("🔑 Spouštím bota…")
+
+print("🔑 Starting bot…")
+attempt = 0
+MAX_SLEEP = 600  # 10 min
 while True:
     try:
-        bot.run(DISCORD_TOKEN)
+        bot.run(TOKEN)
+        attempt = 0  # reset if bot exits cleanly later
         break
     except discord.errors.HTTPException as e:
         if e.status == 429:
-            logging.warning("⚠️ Rate limited, čekám 60 s…"); time.sleep(60)
-        else:
-            raise
+            wait = min(2 ** attempt, MAX_SLEEP)
+            print(f"⚠️ 429 rate‑limit, retry in {wait}s (attempt {attempt+1})")
+            time.sleep(wait)
+            attempt += 1
+            continue
+        raise
