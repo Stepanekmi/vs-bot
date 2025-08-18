@@ -82,7 +82,7 @@ def _normalize_number(x: str) -> float:
             return math.nan
 
 async def _send_long(interaction: discord.Interaction, header: str, lines: List[str], ephemeral: bool = False):
-    """Send long text split into ~1900-char safe chunks."""
+    """Send long text split into ~1900-char safe chunks. Requires that the interaction was already deferred."""
     prefix = header + "\n" if header else ""
     chunk = prefix
     limit = 1900
@@ -100,7 +100,6 @@ def _plot_player_series_with_labels(df: pd.DataFrame, title: str) -> discord.Fil
     for col in ["tank", "rocket", "air", "team4"]:
         if col in df.columns and df[col].notna().any():
             ax.plot(df["timestamp"], df[col], label=col)
-            # annotate each point
             for x, y in zip(df["timestamp"], df[col]):
                 if pd.isna(y):
                     continue
@@ -147,14 +146,14 @@ class PowerCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Jméno hráče")
     async def powerplayer(self, interaction: discord.Interaction, player: str):
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True)  # ensure we ACK within 3s
         df = _load_df()
         df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
         if df_p.empty:
             await interaction.followup.send(f"⚠️ Nenašel jsem žádná data pro hráče **{player}**.")
             return
 
-        # Výpočet posledních Δ (headline)
+        # headline deltas
         deltas = {}
         for col in ["tank", "rocket", "air", "team4"]:
             s = df_p[col].dropna().astype(float)
@@ -163,7 +162,7 @@ class PowerCommands(commands.Cog):
             else:
                 deltas[col] = float("nan")
 
-        # Tabulka všech záznamů s procentní změnou oproti předchozímu
+        # per-entry lines with % change
         rows = []
         prev = None
         for _, row in df_p.iterrows():
@@ -181,7 +180,6 @@ class PowerCommands(commands.Cog):
             rows.append(f"- {ts} — " + ", ".join(parts))
             prev = row
 
-        # Graf s hodnotami
         file = _plot_player_series_with_labels(df_p, f"Vývoj {player}")
         headline = " • ".join([
             f"tank Δ {deltas['tank']:.2f}%" if not math.isnan(deltas["tank"]) else "tank Δ ?",
@@ -237,7 +235,6 @@ class PowerCommands(commands.Cog):
         if df1.empty or df2.empty:
             await interaction.followup.send("⚠️ Jeden z hráčů nemá záznamy.")
             return
-        # jednoduchý graf (bez popisů, aby to zůstalo přehledné)
         fig, ax = plt.subplots(figsize=(8, 4.5))
         ax.plot(df1["timestamp"], df1[team], label=player1)
         ax.plot(df2["timestamp"], df2[team], label=player2)
