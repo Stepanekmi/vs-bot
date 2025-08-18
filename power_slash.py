@@ -81,44 +81,11 @@ def _normalize_number(x: str) -> float:
         except Exception:
             return math.nan
 
-def _plot_player_series(df: pd.DataFrame, title: str) -> discord.File:
-    plt.figure(figsize=(8, 4.5))
-    for col in ["tank", "rocket", "air", "team4"]:
-        if col in df.columns and df[col].notna().any():
-            plt.plot(df["timestamp"], df[col], label=col)
-    plt.xlabel("time")
-    plt.ylabel("power")
-    plt.title(title)
-    plt.legend()
-    buf = io.BytesIO()
-    plt.tight_layout()
-    plt.savefig(buf, format="png")
-    plt.close()
-    buf.seek(0)
-    return discord.File(buf, filename="power.png")
-
-def _plot_two_players(df1: pd.DataFrame, df2: pd.DataFrame, team_col: str, title: str) -> discord.File:
-    plt.figure(figsize=(8, 4.5))
-    if team_col not in df1.columns: df1[team_col] = pd.NA
-    if team_col not in df2.columns: df2[team_col] = pd.NA
-    plt.plot(df1["timestamp"], df1[team_col], label=f"player1:{team_col}")
-    plt.plot(df2["timestamp"], df2[team_col], label=f"player2:{team_col}")
-    plt.xlabel("time")
-    plt.ylabel(team_col)
-    plt.title(title)
-    plt.legend()
-    buf = io.BytesIO()
-    plt.tight_layout()
-    plt.savefig(buf, format="png")
-    plt.close()
-    buf.seek(0)
-    return discord.File(buf, filename="compare.png")
-
 async def _send_long(interaction: discord.Interaction, header: str, lines: List[str], ephemeral: bool = False):
-    """Send long text split into 2000-char safe chunks."""
+    """Send long text split into ~1900-char safe chunks."""
     prefix = header + "\n" if header else ""
     chunk = prefix
-    limit = 1900  # keep margin
+    limit = 1900
     for line in lines:
         if len(chunk) + len(line) + 1 > limit:
             await interaction.followup.send(chunk.rstrip(), ephemeral=ephemeral)
@@ -126,6 +93,28 @@ async def _send_long(interaction: discord.Interaction, header: str, lines: List[
         chunk += (line + "\n")
     if chunk.strip():
         await interaction.followup.send(chunk.rstrip(), ephemeral=ephemeral)
+
+def _plot_player_series_with_labels(df: pd.DataFrame, title: str) -> discord.File:
+    """Plot series and annotate each point with its value (rounded)."""
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    for col in ["tank", "rocket", "air", "team4"]:
+        if col in df.columns and df[col].notna().any():
+            ax.plot(df["timestamp"], df[col], label=col)
+            # annotate each point
+            for x, y in zip(df["timestamp"], df[col]):
+                if pd.isna(y):
+                    continue
+                ax.text(x, y, f"{float(y):.1f}", fontsize=8, ha="left", va="bottom")
+    ax.set_xlabel("time")
+    ax.set_ylabel("power")
+    ax.set_title(title)
+    ax.legend()
+    buf = io.BytesIO()
+    fig.tight_layout()
+    fig.savefig(buf, format="png")
+    plt.close(fig)
+    buf.seek(0)
+    return discord.File(buf, filename="power.png")
 
 # ---- Cog ----
 class PowerCommands(commands.Cog):
@@ -154,7 +143,7 @@ class PowerCommands(commands.Cog):
             msg_commit = f", ale commit na GitHub selhal: {e}"
         await interaction.followup.send(f"✅ Power data pro **{player}** zapsána{msg_commit}.", ephemeral=True)
 
-    @app_commands.command(name="powerplayer", description="Detail vývoje power hráče + graf")
+    @app_commands.command(name="powerplayer", description="Detail vývoje power hráče + graf s hodnotami a tabulkou rozdílů")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Jméno hráče")
     async def powerplayer(self, interaction: discord.Interaction, player: str):
@@ -164,7 +153,8 @@ class PowerCommands(commands.Cog):
         if df_p.empty:
             await interaction.followup.send(f"⚠️ Nenašel jsem žádná data pro hráče **{player}**.")
             return
-        # Výpočet posledních Δ
+
+        # Výpočet posledních Δ (headline)
         deltas = {}
         for col in ["tank", "rocket", "air", "team4"]:
             s = df_p[col].dropna().astype(float)
@@ -172,14 +162,36 @@ class PowerCommands(commands.Cog):
                 deltas[col] = (s.iloc[-1] - s.iloc[-2]) / s.iloc[-2] * 100.0
             else:
                 deltas[col] = float("nan")
-        file = _plot_player_series(df_p, f"Vývoj {player}")
-        summary = " • ".join([
+
+        # Tabulka všech záznamů s procentní změnou oproti předchozímu
+        rows = []
+        prev = None
+        for _, row in df_p.iterrows():
+            ts = pd.to_datetime(row["timestamp"]).strftime("%Y-%m-%d")
+            parts = []
+            for col, short in [("tank","t"),("rocket","r"),("air","a"),("team4","t4")]:
+                val = row.get(col, math.nan)
+                if pd.isna(val):
+                    continue
+                s = f"{short}={float(val):.1f}"
+                if prev is not None and not pd.isna(prev.get(col, math.nan)) and prev[col] > 0:
+                    chg = (val - prev[col]) / prev[col] * 100.0
+                    s += f" ({chg:+.2f}%)"
+                parts.append(s)
+            rows.append(f"- {ts} — " + ", ".join(parts))
+            prev = row
+
+        # Graf s hodnotami
+        file = _plot_player_series_with_labels(df_p, f"Vývoj {player}")
+        headline = " • ".join([
             f"tank Δ {deltas['tank']:.2f}%" if not math.isnan(deltas["tank"]) else "tank Δ ?",
             f"rocket Δ {deltas['rocket']:.2f}%" if not math.isnan(deltas["rocket"]) else "rocket Δ ?",
             f"air Δ {deltas['air']:.2f}%" if not math.isnan(deltas["air"]) else "air Δ ?",
             f"team4 Δ {deltas['team4']:.2f}%" if not math.isnan(deltas["team4"]) else "team4 Δ ?",
         ])
-        await interaction.followup.send(f"**{player}** — {summary}", file=file)
+
+        await interaction.followup.send(f"**{player}** — {headline}", file=file)
+        await _send_long(interaction, f"**{player} — záznamy & rozdíly:**", rows, ephemeral=False)
 
     @app_commands.command(name="powertopplayer", description="Seznam všech hráčů podle maxima a součtu 3 týmů")
     @app_commands.guilds(GUILD)
@@ -192,10 +204,8 @@ class PowerCommands(commands.Cog):
         grp = df.groupby("player", as_index=False).agg({"tank": "max", "rocket": "max", "air": "max"}).fillna(0.0)
         grp["sum3"] = grp["tank"] + grp["rocket"] + grp["air"]
         grp = grp.sort_values("sum3", ascending=False).reset_index(drop=True)
-
-        lines = [f"{i+1}. {row.player}: total={row.sum3:,.0f} (tank={row.tank:,.0f}, rocket={row.rocket:,.0f}, air={row.air:,.0f})"
+        lines = [f"{i+1}. {row.player}: total={row.sum3:,.1f} (tank={row.tank:,.1f}, rocket={row.rocket:,.1f}, air={row.air:,.1f})"
                  for i, row in grp.iterrows()]
-
         await _send_long(interaction, "**TOP hráči (všichni, součet 3)**", lines)
 
     @app_commands.command(name="powertopplayer4", description="Seznam všech hráčů podle maxima a součtu 4 týmů")
@@ -208,10 +218,8 @@ class PowerCommands(commands.Cog):
         grp = df.groupby("player", as_index=False).agg({"tank": "max", "rocket": "max", "air": "max", "team4": "max"}).fillna(0.0)
         grp["sum4"] = grp["tank"] + grp["rocket"] + grp["air"] + grp["team4"]
         grp = grp.sort_values("sum4", ascending=False).reset_index(drop=True)
-
-        lines = [f"{i+1}. {row.player}: total4={row.sum4:,.0f} (t={row.tank:,.0f}, r={row.rocket:,.0f}, a={row.air:,.0f}, t4={row.team4:,.0f})"
+        lines = [f"{i+1}. {row.player}: total4={row.sum4:,.1f} (t={row.tank:,.1f}, r={row.rocket:,.1f}, a={row.air:,.1f}, t4={row.team4:,.1f})"
                  for i, row in grp.iterrows()]
-
         await _send_long(interaction, "**TOP hráči (všichni, součet 4)**", lines)
 
     @app_commands.command(name="powerplayervsplayer", description="Porovnej dva hráče podle zvoleného týmu + graf")
@@ -229,8 +237,14 @@ class PowerCommands(commands.Cog):
         if df1.empty or df2.empty:
             await interaction.followup.send("⚠️ Jeden z hráčů nemá záznamy.")
             return
-        file = _plot_two_players(df1, df2, team, f"{player1} vs {player2} — {team}")
-        await interaction.followup.send(file=file)
+        # jednoduchý graf (bez popisů, aby to zůstalo přehledné)
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        ax.plot(df1["timestamp"], df1[team], label=player1)
+        ax.plot(df2["timestamp"], df2[team], label=player2)
+        ax.set_xlabel("time"); ax.set_ylabel(team); ax.set_title(f"{player1} vs {player2} — {team}")
+        ax.legend()
+        buf = io.BytesIO(); fig.tight_layout(); fig.savefig(buf, format="png"); plt.close(fig); buf.seek(0)
+        await interaction.followup.send(file=discord.File(buf, filename="compare.png"))
 
     @app_commands.command(name="powererase", description="Smazat všechny záznamy hráče")
     @app_commands.guilds(GUILD)
@@ -260,9 +274,21 @@ class PowerCommands(commands.Cog):
             await interaction.followup.send(f"⚠️ Žádné záznamy pro **{player}**.", ephemeral=True)
             return
         lines = []
+        prev = None
         for _, row in df_p.iterrows():
             ts = pd.to_datetime(row["timestamp"]).strftime("%Y-%m-%d %H:%M")
-            lines.append(f"- {ts} — t={row.get('tank', float('nan')):,.0f}, r={row.get('rocket', float('nan')):,.0f}, a={row.get('air', float('nan')):,.0f}, t4={row.get('team4', float('nan')):,.0f}")
+            parts = []
+            for col, short in [("tank","t"),("rocket","r"),("air","a"),("team4","t4")]:
+                val = row.get(col, math.nan)
+                if pd.isna(val):
+                    continue
+                s = f"{short}={float(val):.1f}"
+                if prev is not None and not pd.isna(prev.get(col, math.nan)) and prev[col] > 0:
+                    chg = (val - prev[col]) / prev[col] * 100.0
+                    s += f" ({chg:+.2f}%)"
+                parts.append(s)
+            lines.append(f"- {ts} — " + ", ".join(parts))
+            prev = row
         await _send_long(interaction, f"**{player} — záznamy:**", lines, ephemeral=True)
 
 async def setup_power_commands(bot: commands.Bot):
