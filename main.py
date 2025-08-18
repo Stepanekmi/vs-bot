@@ -1,9 +1,6 @@
 
 import os
-import requests
-import time
 import threading
-
 import discord
 from discord.ext import commands
 
@@ -12,9 +9,8 @@ from vs_slash import setup_vs_commands
 from vs_text_listener import setup_vs_text_listener
 from keepalive import app
 
-print("👀 RUNNING UPDATED MAIN.PY")
+print("👀 RUNNING UPDATED MAIN.PY (v2)")
 
-# --- Discord / Guild ---
 APPLICATION_ID = int(os.getenv("APPLICATION_ID", "0") or "0")
 GUILD_ID = int(os.getenv("GUILD_ID", "1231529219029340234"))
 GUILD = discord.Object(id=GUILD_ID)
@@ -24,21 +20,16 @@ TOKEN = (
     or os.getenv("TOKEN")
     or os.getenv("BOT_TOKEN")
 )
-
 if not TOKEN:
     raise TypeError("Discord token is missing. Set DISCORD_TOKEN (or TOKEN/BOT_TOKEN) env var.")
 
-# --- Basic intents ---
 intents = discord.Intents.default()
 intents.message_content = True
-
 bot = commands.Bot(command_prefix="!", intents=intents, application_id=APPLICATION_ID)
 
-# --- Keepalive (flask) thread ---
 def run_keepalive():
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
-
 threading.Thread(target=run_keepalive, daemon=True).start()
 
 @bot.event
@@ -46,21 +37,14 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user} (id={bot.user.id})")
     print(f"🔗 Guild target: {GUILD_ID}")
     try:
-        # Avoid stale global commands that can cause 'Application did not respond'
-        print("🧹 Clearing GLOBAL app commands…")
-        bot.tree.clear_commands(guild=None)
-        synced_global = await bot.tree.sync()
-        print(f"   Cleared/synced global commands: {len(synced_global)}")
-
-        print("🔄 Syncing GUILD commands…")
+        # Just sync to the guild; do not clear local tree
         synced = await bot.tree.sync(guild=GUILD)
-        print(f"   Synced {len(synced)} commands to guild {GUILD_ID}")
+        print(f"   Synced {len(synced)} commands to guild {GUILD_ID}: {[c.name for c in synced]}")
     except Exception as e:
         print(f"❌ Sync error: {e!r}")
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: Exception):
-    # Ensure we always ACK to avoid 'Application did not respond'
     try:
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True, thinking=False)
@@ -70,10 +54,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: Exceptio
     try:
         await interaction.followup.send(msg, ephemeral=True)
     except Exception:
-        # Last resort: print only
         print(msg)
 
-# --- Setup cogs and listeners ---
+# Register cogs/listeners BEFORE syncing
 setup_power_commands(bot)
 setup_vs_commands(bot)
 setup_vs_text_listener(bot)
