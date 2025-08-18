@@ -11,7 +11,7 @@ from discord.ext import commands
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from github_sync import save_to_github
+from github_sync import save_to_github, fetch_from_repo
 
 # ---- Config / constants ----
 GUILD_ID = int(os.getenv("GUILD_ID", "1231529219029340234"))
@@ -19,6 +19,9 @@ GUILD = discord.Object(id=GUILD_ID)
 
 POWER_FILE = "power_data.csv"
 POWER_HEADER = ["player", "tank", "rocket", "air", "team4", "timestamp"]
+
+# When true, we fetch the latest CSV from GitHub before every read
+ALWAYS_REFRESH = os.getenv("POWER_ALWAYS_REFRESH", "1") not in ("0", "false", "False", "")
 
 # ---- Utilities ----
 def _ensure_power_csv():
@@ -44,7 +47,15 @@ def _ensure_power_csv():
             w = csv.writer(f)
             w.writerow(POWER_HEADER)
 
+def _refresh_from_github():
+    if ALWAYS_REFRESH:
+        try:
+            fetch_from_repo("data/power_data.csv", POWER_FILE)
+        except Exception as e:
+            print(f"⚠️ refresh power_data.csv failed: {e}")
+
 def _load_df() -> pd.DataFrame:
+    _refresh_from_github()
     _ensure_power_csv()
     df = pd.read_csv(POWER_FILE)
     for c in POWER_HEADER:
@@ -82,7 +93,6 @@ def _normalize_number(x: str) -> float:
             return math.nan
 
 async def _send_long(interaction: discord.Interaction, header: str, lines: List[str], ephemeral: bool = False):
-    """Send long text split into ~1900-char safe chunks. Requires that the interaction was already deferred."""
     prefix = header + "\n" if header else ""
     chunk = prefix
     limit = 1900
@@ -95,7 +105,6 @@ async def _send_long(interaction: discord.Interaction, header: str, lines: List[
         await interaction.followup.send(chunk.rstrip(), ephemeral=ephemeral)
 
 def _plot_player_series_with_labels(df: pd.DataFrame, title: str) -> discord.File:
-    """Plot series and annotate each point with its value (rounded)."""
     fig, ax = plt.subplots(figsize=(8, 4.5))
     for col in ["tank", "rocket", "air", "team4"]:
         if col in df.columns and df[col].notna().any():
@@ -115,7 +124,6 @@ def _plot_player_series_with_labels(df: pd.DataFrame, title: str) -> discord.Fil
     buf.seek(0)
     return discord.File(buf, filename="power.png")
 
-# ---- Cog ----
 class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -129,6 +137,7 @@ class PowerCommands(commands.Cog):
         r = _normalize_number(rocket)
         a = _normalize_number(air)
         t4 = _normalize_number(team4) if team4 is not None else math.nan
+        _refresh_from_github()  # pull latest before append
         _ensure_power_csv()
         now = pd.Timestamp.utcnow().isoformat()
         new_row = {"player": player.strip(), "tank": t, "rocket": r, "air": a, "team4": t4, "timestamp": now}
@@ -146,14 +155,12 @@ class PowerCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Jméno hráče")
     async def powerplayer(self, interaction: discord.Interaction, player: str):
-        await interaction.response.defer(thinking=True)  # ensure we ACK within 3s
+        await interaction.response.defer(thinking=True)
         df = _load_df()
         df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
         if df_p.empty:
             await interaction.followup.send(f"⚠️ Nenašel jsem žádná data pro hráče **{player}**.")
             return
-
-        # headline deltas
         deltas = {}
         for col in ["tank", "rocket", "air", "team4"]:
             s = df_p[col].dropna().astype(float)
@@ -161,8 +168,6 @@ class PowerCommands(commands.Cog):
                 deltas[col] = (s.iloc[-1] - s.iloc[-2]) / s.iloc[-2] * 100.0
             else:
                 deltas[col] = float("nan")
-
-        # per-entry lines with % change
         rows = []
         prev = None
         for _, row in df_p.iterrows():
@@ -179,7 +184,6 @@ class PowerCommands(commands.Cog):
                 parts.append(s)
             rows.append(f"- {ts} — " + ", ".join(parts))
             prev = row
-
         file = _plot_player_series_with_labels(df_p, f"Vývoj {player}")
         headline = " • ".join([
             f"tank Δ {deltas['tank']:.2f}%" if not math.isnan(deltas["tank"]) else "tank Δ ?",
@@ -187,7 +191,6 @@ class PowerCommands(commands.Cog):
             f"air Δ {deltas['air']:.2f}%" if not math.isnan(deltas["air"]) else "air Δ ?",
             f"team4 Δ {deltas['team4']:.2f}%" if not math.isnan(deltas["team4"]) else "team4 Δ ?",
         ])
-
         await interaction.followup.send(f"**{player}** — {headline}", file=file)
         await _send_long(interaction, f"**{player} — záznamy & rozdíly:**", rows, ephemeral=False)
 
