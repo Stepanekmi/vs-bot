@@ -1,6 +1,7 @@
 
 import os
 import threading
+import asyncio
 import discord
 from discord.ext import commands
 
@@ -9,9 +10,8 @@ from vs_slash import setup_vs_commands
 from vs_text_listener import setup_vs_text_listener
 from keepalive import app
 
-print("👀 RUNNING UPDATED MAIN.PY (v2)")
+print("👀 RUNNING UPDATED MAIN.PY (v3)")
 
-APPLICATION_ID = int(os.getenv("APPLICATION_ID", "0") or "0")
 GUILD_ID = int(os.getenv("GUILD_ID", "1231529219029340234"))
 GUILD = discord.Object(id=GUILD_ID)
 
@@ -25,7 +25,7 @@ if not TOKEN:
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents, application_id=APPLICATION_ID)
+bot = commands.Bot(command_prefix="!", intents=intents)  # no application_id
 
 def run_keepalive():
     port = int(os.getenv("PORT", "10000"))
@@ -37,9 +37,18 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user} (id={bot.user.id})")
     print(f"🔗 Guild target: {GUILD_ID}")
     try:
-        # Just sync to the guild; do not clear local tree
+        # First attempt: sync guild-scoped commands
         synced = await bot.tree.sync(guild=GUILD)
-        print(f"   Synced {len(synced)} commands to guild {GUILD_ID}: {[c.name for c in synced]}")
+        names = [c.name for c in synced]
+        print(f"   First sync to guild {GUILD_ID}: {names}")
+
+        # If expected commands aren't present, copy global to guild and resync
+        expected = {'powertopplayer','powerenter','powerplayer','powerplayervsplayer','powerlist','powererase','powertopplayer4','info','vs_start','vs_finish'}
+        if not expected.intersection(set(names)):
+            print("   Expected commands missing – copying GLOBAL → GUILD and resyncing…")
+            bot.tree.copy_global_to(guild=GUILD)
+            synced2 = await bot.tree.sync(guild=GUILD)
+            print(f"   Resync to guild {GUILD_ID}: {[c.name for c in synced2]}")
     except Exception as e:
         print(f"❌ Sync error: {e!r}")
 
