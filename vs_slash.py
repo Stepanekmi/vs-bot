@@ -77,7 +77,7 @@ class VSCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     @app_commands.describe(date="Date of the match (e.g., 10.5.25)", tag="Alliance tag")
     async def vs_start(self, interaction: discord.Interaction, date: str, tag: str):
-    date = _normalize_date(str(date))
+        date = _normalize_date(str(date))
         self.bot.upload_session = {"date": date, "tag": tag, "records": {}}
         await interaction.response.send_message(f"✅ Started upload for {date} ({tag}).")
 
