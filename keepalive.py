@@ -1,23 +1,23 @@
-from flask import Flask
 import os
+from threading import Thread
+from flask import Flask
 
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "Bot is running!"
+@app.get("/")
+def root():
+    return "OK"
 
-@app.route('/ping')
+@app.get("/ping")
 def ping():
     return "pong"
 
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT',5000)))
-
-def keep_alive():
-    import threading, os
-    def run():
-        port = int(os.getenv('PORT', 10000))
-        app.run(host='0.0.0.0', port=port)
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
+def keepalive():
+    """Na Renderu otevře HTTP port, aby služba nepadala na port scan."""
+    port = int(os.environ.get("PORT", "10000"))
+    Thread(
+        target=lambda: app.run(
+            host="0.0.0.0", port=port, debug=False, use_reloader=False
+        ),
+        daemon=True,
+    ).start()

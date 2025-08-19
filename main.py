@@ -1,92 +1,72 @@
 import os
-import requests
-import time  # for back‑off
+import asyncio
+import logging
 
-# Diagnostic prints
-print("👀 RUNNING UPDATED MAIN.PY")
 import discord
-print("🔍 discord.py version:", discord.__version__)
-
-# Fetch persisted data from GitHub
-GITHUB_REPO = "Stepanekmi/vs-data-store"
-BRANCH = "main"
-
-def fetch_file(repo_path: str, local_path: str):
-    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{BRANCH}/{repo_path}"
-    try:
-        r = requests.get(url)
-        if r.status_code == 200:
-            with open(local_path, "wb") as f:
-                f.write(r.content)
-            print(f"✅ Fetched {repo_path}")
-        else:
-            print(f"⚠️ Failed to fetch {repo_path}: HTTP {r.status_code}")
-    except Exception as e:
-        print(f"❌ Exception fetching {repo_path}: {e}")
-
-# Ensure files are loaded before bot starts
-fetch_file("data/vs_data.csv", "vs_data.csv")
-fetch_file("data/power_data.csv", "power_data.csv")
-fetch_file("data/r4_list.txt", "r4_list.txt")
-
 from discord.ext import commands
-from power_slash import setup_power_commands
-from vs_slash import setup_vs_commands
-from vs_text_listener import setup_vs_text_listener
-import threading
-from keepalive import app
 
-# Discord IDs
-APPLICATION_ID = 1371568333333332118
-GUILD_ID       = 1231529219029340234
-TOKEN          = os.getenv("DISCORD_TOKEN")
+from keepalive import keepalive
+from github_sync import fetch_from_repo
+from power_slash import setup_power_commands
+
+# (VS příkazy nejsou potřeba; nechávám je pryč)
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+if not TOKEN:
+    raise RuntimeError("Missing DISCORD_TOKEN in environment")
+
+GUILD_ID = int(os.getenv("GUILD_ID", "1231529219029340234"))
+GUILD_OBJ = discord.Object(id=GUILD_ID)
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("vsbot")
+
+PREFETCH = [
+    ("data/power_data.csv", "power_data.csv"),
+    ("data/vs_data.csv", "vs_data.csv"),
+    ("data/r4_list.txt", "r4_list.txt"),
+]
 
 intents = discord.Intents.default()
-intents.message_content = True
-
-class MyBot(commands.Bot):
-    def __init__(self):
-        super().__init__(
-            command_prefix="!",
-            intents=intents,
-            application_id=APPLICATION_ID
-        )
-
-    async def setup_hook(self):
-        print("⚙️ setup_hook spuštěn…")
-        await setup_power_commands(self)
-        await setup_vs_commands(self)
-        setup_vs_text_listener(self)
-        # Sync slash commands to guild
-        await self.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"✅ Slash commands synced for GUILD_ID {GUILD_ID}")
-
-bot = MyBot()
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f"🔓 Logged in as {bot.user} (ID: {bot.user.id})")
-    print("------")
-
-# Keepalive server for UptimeRobot
-threading.Thread(
-    target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
-).start()
-
-
-print("🔑 Starting bot…")
-attempt = 0
-MAX_SLEEP = 600  # 10 min
-while True:
+    log.info("✅ Logged in as %s (%s)", bot.user, getattr(bot.user, "id", "?"))
     try:
-        bot.run(TOKEN)
-        attempt = 0  # reset if bot exits cleanly later
-        break
-    except discord.errors.HTTPException as e:
-        if e.status == 429:
-            wait = min(2 ** attempt, MAX_SLEEP)
-            print(f"⚠️ 429 rate‑limit, retry in {wait}s (attempt {attempt+1})")
-            time.sleep(wait)
-            attempt += 1
-            continue
-        raise
+        await bot.tree.sync(guild=GUILD_OBJ)
+        log.info("✅ App commands synced to guild %s", GUILD_ID)
+    except Exception as e:
+        log.exception("Slash command sync failed: %s", e)
+
+async def prefetch_data():
+    any_ok = False
+    for repo_path, local_path in PREFETCH:
+        try:
+            ok = fetch_from_repo(repo_path, local_path, prefer_api=True)
+            if ok:
+                log.info("📥 Fetched %s -> %s", repo_path, local_path)
+                any_ok = True
+            else:
+                log.warning("⚠️ Could not fetch %s", repo_path)
+        except Exception as e:
+            log.exception("Fetch error for %s: %s", repo_path, e)
+    if not any_ok:
+        log.warning("⚠️ No data files could be fetched. Using local copies if present.")
+
+async def setup_all(bot: commands.Bot):
+    await setup_power_commands(bot)
+    log.info("🔌 Power commands loaded")
+
+async def main():
+    print("👀 RUNNING MAIN (keepalive + API fetch)")
+    keepalive()                           # Render „open port“ fix
+    await prefetch_data()                 # jednorázové stažení dat (API bez cache)
+    await setup_all(bot)                  # načtení cogů
+    await bot.start(TOKEN)                # přihlášení bota
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Exiting…")

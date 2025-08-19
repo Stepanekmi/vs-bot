@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 
 GH_OWNER  = os.getenv("GH_OWNER", "stepanekmi")
 GH_REPO   = os.getenv("GH_REPO",  "vs-data-store")
-GH_TOKEN  = os.getenv("GH_TOKEN")         # needs contents:write
+GH_TOKEN  = os.getenv("GH_TOKEN")          # musí mít contents:write
 GH_BRANCH = os.getenv("GH_BRANCH", "main")
 
 session = requests.Session()
@@ -16,17 +16,18 @@ session.headers.update({
 if GH_TOKEN:
     session.headers.update({"Authorization": f"token {GH_TOKEN}"})
 
+
 def _api_url(path: str) -> str:
     return f"https://api.github.com/repos/{GH_OWNER}/{GH_REPO}/contents/{path}"
 
 def _raw_url(path: str) -> str:
     return f"https://raw.githubusercontent.com/{GH_OWNER}/{GH_REPO}/{GH_BRANCH}/{path}"
 
-# --------- READ ---------
+
 def fetch_from_repo(repo_file_path: str, local_file_path: str, prefer_api: bool = True) -> bool:
     """
     Stáhne repo soubor do local_file_path.
-    Preferuje Contents API (bez CDN cache). RAW je fallback.
+    Preferuje GitHub Contents API (bez CDN cache). RAW je fallback.
     """
     # 1) API (bez cache)
     if prefer_api:
@@ -48,7 +49,7 @@ def fetch_from_repo(repo_file_path: str, local_file_path: str, prefer_api: bool 
         except requests.RequestException as e:
             print(f"⚠️ API fetch error {repo_file_path}: {e}")
 
-    # 2) RAW (může být cache několik minut)
+    # 2) RAW (může být cache pár minut)
     try:
         r = session.get(_raw_url(repo_file_path), timeout=20)
         if r.status_code == 200 and r.content:
@@ -63,6 +64,7 @@ def fetch_from_repo(repo_file_path: str, local_file_path: str, prefer_api: bool 
 
     return False
 
+
 def get_remote_meta(repo_file_path: str) -> Tuple[Optional[str], Optional[int]]:
     r = session.get(_api_url(repo_file_path), params={"ref": GH_BRANCH}, timeout=20)
     if r.status_code == 200:
@@ -70,9 +72,9 @@ def get_remote_meta(repo_file_path: str) -> Tuple[Optional[str], Optional[int]]:
         return j.get("sha"), j.get("size")
     return None, None
 
-# --------- WRITE ---------
+
 def save_to_github(local_file_path: str, repo_file_path: str, message: str) -> Optional[str]:
-    """Create/update file. Vrací novou content SHA nebo None (když chybí token)."""
+    """Vytvoří/aktualizuje soubor v repu. Vrací novou content SHA nebo None (když chybí token)."""
     if not GH_TOKEN:
         print("⚠️ GH_TOKEN not set — skipping commit")
         return None

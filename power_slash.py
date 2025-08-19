@@ -12,14 +12,15 @@ import matplotlib.pyplot as plt
 
 from github_sync import fetch_from_repo, save_to_github, get_remote_meta
 
+# ====== konfigurace ======
 GUILD_ID = int(os.getenv("GUILD_ID", "1231529219029340234"))
 GUILD = discord.Object(id=GUILD_ID)
 
-REPO_POWER_PATH = "data/power_data.csv"
-LOCAL_POWER_FILE = "power_data.csv"
+REPO_POWER_PATH = "data/power_data.csv"   # cesta v repozitáři vs-data-store
+LOCAL_POWER_FILE = "power_data.csv"       # lokální pracovní kopie
 POWER_HEADER = ["player", "tank", "rocket", "air", "team4", "timestamp"]
 
-# ---------- helpers ----------
+# ====== helpers ======
 async def _safe_defer(interaction: discord.Interaction, ephemeral: bool = False) -> bool:
     try:
         if not interaction.response.is_done():
@@ -107,7 +108,29 @@ def _delta_prev_distinct(series: pd.Series):
     sign = "+" if diff >= 0 else ""
     return f"{emoji} {pct:.2f}% ({sign}{diff:.1f})"
 
-# ---------- Cog ----------
+def _sequence_line(values: List[float]) -> str:
+    """Vrátí řetězec ve stylu: 34.06 → +2.08% → 34.77 → ... | Total: +21.23%"""
+    nums = [float(v) for v in values if not pd.isna(v)]
+    if not nums:
+        return "—"
+    parts = [f"{nums[0]:.2f}"]
+    for prev, cur in zip(nums, nums[1:]):
+        if prev == 0:
+            parts.extend(["→", f"{cur:.2f}"])
+            continue
+        pct = (cur - prev) / prev * 100.0
+        sign = "+" if pct >= 0 else ""
+        parts.extend(["→", f"{sign}{pct:.2f}%", "→", f"{cur:.2f}"])
+    if len(nums) >= 2 and nums[0] != 0:
+        total = (nums[-1] - nums[0]) / nums[0] * 100.0
+        parts.append(f" | Total: {('+' if total>=0 else '')}{total:.2f}%")
+    return " ".join(parts)
+
+def _icon(name: str) -> str:
+    return {"tank":"🛡️", "rocket":"🚀", "air":"✈️"}.get(name, name)
+
+
+# ====== Cog ======
 class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -135,11 +158,10 @@ class PowerCommands(commands.Cog):
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
         df.to_csv(LOCAL_POWER_FILE, index=False)
 
-        # 3) commit do GitHubu + ověření + přetažení zpět (API only)
+        # 3) commit + ověření + stáhnout zpět (API)
         sha_before, _ = get_remote_meta(REPO_POWER_PATH)
         sha_after = save_to_github(LOCAL_POWER_FILE, REPO_POWER_PATH, f"powerenter: {player}")
         sha_verify, size_verify = get_remote_meta(REPO_POWER_PATH)
-        # stáhnout zpět (API) => lokál = to, co je v repu
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
 
         if sha_after:
@@ -153,37 +175,39 @@ class PowerCommands(commands.Cog):
                 ephemeral=True
             )
 
-    @app_commands.command(name="powerplayer", description="Vývoj power pro hráče (graf + změny)")
+    @app_commands.command(name="powerplayer", description="Vývoj power pro hráče (graf + sekvence změn po týmech)")
     @app_commands.guilds(GUILD)
     async def powerplayer(self, interaction: discord.Interaction, player: str):
         if not await _safe_defer(interaction): return
+
+        # pro jistotu si vždy přetáhneme nejnovější data z GitHubu (bez cache)
+        fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
+
         df = _load_power_df()
         df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
         if df_p.empty:
             await interaction.followup.send(f"⚠️ Žádná data pro **{player}**."); return
 
+        # headline – změna vs předchozí odlišná hodnota
         parts = []
-        for col, name in [("tank","tank"),("rocket","rocket"),("air","air"),("team4","team4")]:
+        for col in ["tank","rocket","air","team4"]:
             if col not in df_p.columns: continue
-            d = _delta_prev_distinct(df_p[col]); parts.append(f"{name} {d}" if d else f"{name} Δ ?")
+            d = _delta_prev_distinct(df_p[col])
+            label = col if col != "team4" else "team4"
+            parts.append(f"{label} {d}" if d else f"{label} Δ ?")
         headline = " • ".join(parts)
 
-        rows = []; prev = None
-        for _, row in df_p.iterrows():
-            ts = pd.to_datetime(row["timestamp"]).strftime("%Y-%m-%d")
-            segs = []
-            for col, short in [("tank","t"),("rocket","r"),("air","a"),("team4","t4")]:
-                val = row.get(col, math.nan)
-                if pd.isna(val): continue
-                txt = f"{short}={float(val):.1f}"
-                if prev is not None and not pd.isna(prev.get(col, math.nan)) and prev[col] > 0:
-                    chg = (val - prev[col]) / prev[col] * 100.0
-                    txt += f" ({chg:+.2f}%)"
-                segs.append(txt)
-            rows.append(f"- {ts} — " + ", ".join(segs)); prev = row
+        # sekvence jako dřív
+        lines = []
+        for col in ["tank","rocket","air"]:
+            if col not in df_p.columns or df_p[col].dropna().empty: 
+                continue
+            seq = _sequence_line(df_p[col].tolist())
+            lines.append(f"**{_icon(col)} {col.upper()}:**\n{seq}\n")
 
         file = _plot_series(df_p, f"Vývoj {player}")
         await interaction.followup.send(f"**{player}** — {headline}", file=file)
+        await _send_long(interaction, "", lines)
 
     @app_commands.command(name="powertopplayer", description="Všichni hráči podle součtu (tank+rocket+air)")
     @app_commands.guilds(GUILD)
@@ -206,11 +230,40 @@ class PowerCommands(commands.Cog):
         df = _load_power_df()
         if "team4" not in df.columns: df["team4"] = 0.0
         grp = df.groupby("player", as_index=False).agg({"tank":"max","rocket":"max","air":"max","team4":"max"}).fillna(0.0)
+        grp["sum4"] = df[["tank","rocket","air","team4"]].max(axis=0).sum()  # not used, jen pro konzistenci
         grp["sum4"] = grp["tank"] + grp["rocket"] + grp["air"] + grp["team4"]
         grp = grp.sort_values("sum4", ascending=False).reset_index(drop=True)
         lines = [f"{i+1}. {row.player}: total4={row.sum4:,.1f} (t={row.tank:,.1f}, r={row.rocket:,.1f}, a={row.air:,.1f}, t4={row.team4:,.1f})"
                  for i, row in grp.iterrows()]
         await _send_long(interaction, "**TOP hráči (všichni, součet 4)**", lines)
+
+    @app_commands.command(name="powerdebug", description="Porovná lokální a vzdálené CSV (rychlá diagnostika)")
+    @app_commands.guilds(GUILD)
+    async def powerdebug(self, interaction: discord.Interaction):
+        if not await _safe_defer(interaction, ephemeral=True): return
+        # lokál
+        try:
+            ldf = pd.read_csv(LOCAL_POWER_FILE); l_rows = len(ldf)
+            l_tail = ldf.tail(3).to_string(index=False)
+        except Exception as e:
+            l_rows = -1; l_tail = f"read error: {e}"
+        # remote
+        sha, size = get_remote_meta(REPO_POWER_PATH)
+        tmp = "_tmp_power.csv"
+        fetched = fetch_from_repo(REPO_POWER_PATH, tmp, prefer_api=True)
+        if fetched:
+            try:
+                rdf = pd.read_csv(tmp); r_rows = len(rdf)
+                r_tail = rdf.tail(3).to_string(index=False)
+            except Exception as e:
+                r_rows = -1; r_tail = f"read error: {e}"
+        else:
+            r_rows = -1; r_tail = "fetch failed"
+        msg = (
+            f"**Local**: rows={l_rows}\n```\n{l_tail}\n```\n"
+            f"**Remote**: sha={sha}, size={size}, rows={r_rows}\n```\n{r_tail}\n```"
+        )
+        await interaction.followup.send(msg, ephemeral=True)
 
 async def setup_power_commands(bot: commands.Bot):
     await bot.add_cog(PowerCommands(bot))
