@@ -1,57 +1,55 @@
-
 import os
 import base64
 import requests
+from typing import Optional, Tuple
 
-# Repo in the form "owner/name"
-GITHUB_REPO = os.getenv("GITHUB_REPO", "Stepanekmi/vs-data-store")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
-DEFAULT_TIMEOUT = 20
+# ====== Konfigurace z ENV ======
+GH_OWNER  = os.getenv("GH_OWNER", "stepanekmi")
+GH_REPO   = os.getenv("GH_REPO",  "vs-data-store")
+GH_TOKEN  = os.getenv("GH_TOKEN")  # musí mít scope "repo" (stačí contents:write)
+GH_BRANCH = os.getenv("GH_BRANCH", "main")
 
+# ====== HTTP session ======
 session = requests.Session()
-if GITHUB_TOKEN:
-    session.headers.update({
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "vs-bot/1.0"
-    })
-else:
-    session.headers.update({
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "vs-bot/1.0"
-    })
+session.headers.update({
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "vs-bot/1.0"
+})
+if GH_TOKEN:
+    session.headers.update({"Authorization": f"token {GH_TOKEN}"})
 
-def _split_repo(repo: str):
-    if "/" not in repo:
-        raise ValueError("GITHUB_REPO must be 'owner/name'")
-    owner, name = repo.split("/", 1)
-    return owner, name
+def _api_url(path: str) -> str:
+    return f"https://api.github.com/repos/{GH_OWNER}/{GH_REPO}/contents/{path}"
 
+def _raw_url(path: str) -> str:
+    return f"https://raw.githubusercontent.com/{GH_OWNER}/{GH_REPO}/{GH_BRANCH}/{path}"
+
+# --------------------------------------------------------------------
+# ČTENÍ (funguje i bez tokenu – primárně přes RAW, fallback přes API)
+# --------------------------------------------------------------------
 def fetch_from_repo(repo_file_path: str, local_file_path: str) -> bool:
     """
-    Fetch a file from the repo into a local path.
-    - Tries RAW URL first (works for public).
-    - Falls back to Contents API (works with private if GITHUB_TOKEN is set).
-    Returns True if fetched, False if not.
+    Stáhne soubor z GitHubu do local_file_path.
+    1) zkusí RAW (veřejné repo)
+    2) pokud selže, zkusí Contents API (funguje i pro privátní repo s tokenem)
+    Vrací True při úspěchu.
     """
-    owner, name = _split_repo(GITHUB_REPO)
-    # Try RAW
-    raw_url = f"https://raw.githubusercontent.com/{owner}/{name}/{GITHUB_BRANCH}/{repo_file_path}"
+    # RAW
     try:
-        r = session.get(raw_url, timeout=DEFAULT_TIMEOUT)
+        r = session.get(_raw_url(repo_file_path), timeout=20)
         if r.status_code == 200 and r.content:
             with open(local_file_path, "wb") as f:
                 f.write(r.content)
-            print(f"✅ Fetched {repo_file_path} → {local_file_path} (RAW)")
+            print(f"✅ RAW fetched {repo_file_path} -> {local_file_path} ({len(r.content)} B)")
             return True
-    except requests.RequestException:
-        pass
+        else:
+            print(f"ℹ️ RAW fetch {repo_file_path} status={r.status_code}")
+    except requests.RequestException as e:
+        print(f"ℹ️ RAW fetch error {repo_file_path}: {e}")
 
-    # Fallback to API
-    api_url = f"https://api.github.com/repos/{owner}/{name}/contents/{repo_file_path}?ref={GITHUB_BRANCH}"
+    # API (fallback)
     try:
-        r = session.get(api_url, timeout=DEFAULT_TIMEOUT)
+        r = session.get(_api_url(repo_file_path), params={"ref": GH_BRANCH}, timeout=20)
         if r.status_code == 200:
             data = r.json()
             content_b64 = data.get("content")
@@ -59,42 +57,59 @@ def fetch_from_repo(repo_file_path: str, local_file_path: str) -> bool:
                 content = base64.b64decode(content_b64)
                 with open(local_file_path, "wb") as f:
                     f.write(content)
-                print(f"✅ Fetched {repo_file_path} → {local_file_path} (API)")
+                print(f"✅ API fetched {repo_file_path} -> {local_file_path} ({len(content)} B)")
                 return True
-    except requests.RequestException:
-        pass
+            else:
+                print(f"⚠️ API fetch without content for {repo_file_path}")
+        else:
+            print(f"⚠️ API fetch {repo_file_path} status={r.status_code} body={r.text[:200]}")
+    except requests.RequestException as e:
+        print(f"⚠️ API fetch error {repo_file_path}: {e}")
 
-    print(f"⚠️ Fetch skipped/failed for {repo_file_path}")
     return False
 
-def save_to_github(local_file_path: str, repo_file_path: str, commit_msg: str = "Update data", branch: str = None) -> None:
-    """Commit a local file into the GitHub repository at repo_file_path on the given branch."""
-    if branch is None:
-        branch = GITHUB_BRANCH
-    if not GITHUB_TOKEN:
-        print("⚠️  GITHUB_TOKEN not set – skipping GitHub commit")
-        return
+# --------------------------------------------------------------------
+# ZÁPIS (vyžaduje GH_TOKEN)
+# --------------------------------------------------------------------
+def _get_remote_sha(repo_file_path: str) -> Optional[str]:
+    r = session.get(_api_url(repo_file_path), params={"ref": GH_BRANCH}, timeout=20)
+    if r.status_code == 200:
+        return r.json().get("sha")
+    if r.status_code != 404:
+        print(f"⚠️ meta status={r.status_code} body={r.text[:200]}")
+    return None
+
+def save_to_github(local_file_path: str, repo_file_path: str, message: str) -> Optional[str]:
+    """
+    Nahraje lokální soubor na GitHub (vytvoří/aktualizuje).
+    Vrací SHA nového blobu/obsahu při úspěchu.
+    """
+    if not GH_TOKEN:
+        print("⚠️ GH_TOKEN není nastaven — commit se přeskočí.")
+        return None
+
     if not os.path.exists(local_file_path):
         raise FileNotFoundError(f"Local file not found: {local_file_path}")
-
-    owner, name = _split_repo(GITHUB_REPO)
-    url = f"https://api.github.com/repos/{owner}/{name}/contents/{repo_file_path}"
 
     with open(local_file_path, "rb") as f:
         content_b64 = base64.b64encode(f.read()).decode("utf-8")
 
-    # Detect existing file to get its SHA
-    sha = None
-    r_meta = session.get(url, params={"ref": branch}, timeout=DEFAULT_TIMEOUT)
-    if r_meta.status_code == 200:
-        sha = r_meta.json().get("sha")
-    elif r_meta.status_code != 404:
-        r_meta.raise_for_status()
-
-    payload = {"message": commit_msg, "content": content_b64, "branch": branch}
+    payload = {
+        "message": message,
+        "content": content_b64,
+        "branch": GH_BRANCH
+    }
+    sha = _get_remote_sha(repo_file_path)
     if sha:
         payload["sha"] = sha
 
-    r_put = session.put(url, json=payload, timeout=DEFAULT_TIMEOUT)
-    r_put.raise_for_status()
-    print(f"✅  Committed {local_file_path} → {repo_file_path} on {branch}: {commit_msg}")
+    r = session.put(_api_url(repo_file_path), json=payload, timeout=30)
+    if r.status_code in (200, 201):
+        out = r.json()
+        new_sha = (out.get("content") or {}).get("sha")
+        print(f"✅ Committed {local_file_path} -> {repo_file_path} (sha={new_sha})")
+        return new_sha
+    else:
+        print(f"❌ Commit failed: {r.status_code} {r.text[:300]}")
+        r.raise_for_status()
+        return None
