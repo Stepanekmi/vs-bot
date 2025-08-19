@@ -500,60 +500,59 @@ class StormPickerView(discord.ui.View):
         await interaction.response.edit_message(content=f"Vybráno hráčů: {len(self.selected)} • Vyber počet týmů (2–6) a klikni **🛡️ Rozdělit týmy**.", view=self)
 
     @discord.ui.button(label="🛡️ Rozdělit týmy", style=discord.ButtonStyle.primary)
-async def build_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
-    if interaction.user.id != self.owner_id:
-        await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
-        return
-    if not self.selected:
-        await interaction.response.send_message("Nejsou vybraní hráči.", ephemeral=True)
-        return
-    if not self.team_count:
-        await interaction.response.send_message("Vyber nejprve počet týmů (2–6).", ephemeral=True)
-        return
+    async def build_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            return
+        if not self.selected:
+            await interaction.response.send_message("Nejsou vybraní hráči.", ephemeral=True)
+            return
+        if not self.team_count:
+            await interaction.response.send_message("Vyber nejprve počet týmů (2–6).", ephemeral=True)
+            return
 
-    # 1) Připrav data
-    fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
-    df = _load_power_df()
-    latest = _latest_by_player(df)
-    latest["total"] = latest.apply(_total_power_row, axis=1)
+        # Získáme poslední hodnoty a spočítáme síly
+        fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
+        df = _load_power_df()
+        latest = _latest_by_player(df)
+        latest["total"] = latest.apply(_total_power_row, axis=1)
 
-    picked = latest[latest["player"].isin(self.selected)].copy()
-    if len(picked) < self.team_count + 2:
-        await interaction.response.send_message("⚠️ Málo vybraných hráčů pro rozdělení (potřeba alespoň 2 + počet týmů).", ephemeral=True)
-        return
+        picked = latest[latest["player"].isin(self.selected)].copy()
+        if len(picked) < self.team_count + 2:
+            await interaction.response.send_message("⚠️ Málo vybraných hráčů pro rozdělení (potřeba alespoň 2 + počet týmů).", ephemeral=True)
+            return
 
-    picked = picked.sort_values("total", ascending=False).reset_index(drop=True)
-    attackers = picked.iloc[:2].copy()
-    rest = picked.iloc[2:].copy()
+        # 2 nejsilnější → útočníci
+        picked = picked.sort_values("total", ascending=False).reset_index(drop=True)
+        attackers = picked.iloc[:2].copy()
+        rest = picked.iloc[2:].copy()
 
-    k = self.team_count
-    captains = rest.iloc[:k].copy()
-    rest = rest.iloc[k:].copy()
+        # kapitáni
+        k = self.team_count
+        captains = rest.iloc[:k].copy()
+        rest = rest.iloc[k:].copy()
 
-    teams = []
-    for _, cap in captains.iterrows():
-        teams.append([str(cap["player"]), float(cap["total"]), []])  # name, power, members
+        # inicializace týmů (kapitán + jeho síla)
+        teams: List[Tuple[str, float, List[str]]] = []  # (captain_name, total_power, members)
+        for _, cap in captains.iterrows():
+            teams.append([str(cap["player"]), float(cap["total"]), []])  # name, power, members list
 
-    for _, row in rest.iterrows():
-        idx = min(range(len(teams)), key=lambda i: teams[i][1])
-        teams[idx][1] += float(row["total"])
-        teams[idx][2].append(str(row["player"]))
+        # greedy rozdělení zbytku: vždy přidej hráče do týmu s nejnižší silou
+        for _, row in rest.iterrows():
+            idx = min(range(len(teams)), key=lambda i: teams[i][1])
+            teams[idx][1] += float(row["total"])
+            teams[idx][2].append(str(row["player"]))
 
-    out_lines = []
-    out_lines.append(f"⚔️ Attack: 🛡️ {attackers.iloc[0]['player']}, 🛡️ {attackers.iloc[1]['player']}\n")
-    for i, (cap_name, power, members) in enumerate(teams, start=1):
-        out_lines.append(f"👑 Kapitán Team {i}: {cap_name}")
-        out_lines.append(f"   🧑‍🤝‍🧑 Hráči: {', '.join(members) if members else '—'}")
-        out_lines.append(f"   🔋 Total power: {power:,.1f}\n")
+        # Výstup
+        out_lines = []
+        out_lines.append(f"⚔️ Attack: 🛡️ {attackers.iloc[0]['player']}, 🛡️ {attackers.iloc[1]['player']}\n")
+        for i, (cap_name, power, members) in enumerate(teams, start=1):
+            out_lines.append(f"👑 Kapitán Team {i}: {cap_name}")
+            out_lines.append(f"   🧑‍🤝‍🧑 Hráči: {', '.join(members) if members else '—'}")
+            out_lines.append(f"   🔋 Total power: {power:,.1f}\n")
 
-    # 2) Odpověz na interakci úpravou (zrušíme komponenty) – žádné mazání ephemeral zprávy
-    await interaction.response.edit_message(content="Týmy vygenerovány 👇", view=None)
-
-    # 3) Pošleme veřejně do kanálu
-    await interaction.channel.send("\n".join(out_lines))
-
-    # 4) ukončíme view
-    self.stop()
+        # Zavřít view a poslat finální text (veřejně)
+        self.stop()
         await interaction.message.delete()
         await interaction.channel.send("\n".join(out_lines))
 
