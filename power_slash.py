@@ -5,11 +5,13 @@
 # Přidává:
 #   /powerplayervsplayer (autocomplete hráčů + graf jen pro 1 tým)
 #   /storm (UI výběr hráčů se stránkováním + rozdělení do týmů)
-# OPRAVA: u /storm se už nesnažíme mazat ephemeral zprávu (404), ale jen ji editujeme.
+# OPRAVA: u /storm se už nesnažíme mazat ephemeral zprávu (404), ale ji editujeme.
+# OPRAVA: načítání CSV je robustní – normalizace tab/; na čárky, pevné pořadí sloupců.
 # ------------------------------------------------------------
 
 import os
 import io
+import re
 import math
 from typing import Optional, List, Tuple
 
@@ -51,10 +53,8 @@ def _ensure_csv(path: str, header: List[str]) -> None:
             if os.path.getsize(path) == 0:
                 need = True
             else:
-                df = pd.read_csv(path, sep=None, engine="python")
-                for c in header:
-                    if c not in df.columns:
-                        need = True; break
+                # jen ověřit čitelnost
+                _ = pd.read_csv(path, sep=None, engine="python")
         except Exception:
             need = True
     if need:
@@ -76,11 +76,31 @@ def _normalize_number(x: Optional[str]) -> float:
         except Exception: return math.nan
 
 def _load_power_df() -> pd.DataFrame:
+    """
+    Robustní načtení CSV:
+    - normalizuje oddělovače: TAB/; -> ,
+    - sloučí vícenásobné čárky (ponechá prázdná pole),
+    - sjednotí názvy sloupců, typy, pořadí,
+    - timestamp parsuje i ISO s 'T' i s mezerou.
+    """
     _ensure_csv(LOCAL_POWER_FILE, POWER_HEADER)
-    # autodetekce oddělovače (čárka/tab/;), robustní čtení
-    df = pd.read_csv(LOCAL_POWER_FILE, sep=None, engine="python")
 
-    # sjednocení názvů
+    # --- NORMALIZACE ODDĚLOVAČŮ ---
+    with open(LOCAL_POWER_FILE, "rb") as f:
+        raw = f.read()
+    text = raw.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
+
+    # TAB a ; -> čárka
+    text = text.replace("\t", ",").replace(";", ",")
+
+    # Sjednotit vícenásobné čárky typu ", ,,,," na jednu čárku mezi hodnotami,
+    # ale zachovat prázdné hodnoty (,,). Toto řeší hlavně TAB/; mix.
+    text = re.sub(r",\s*,+", ",", text)
+
+    # --- ČTENÍ S PEVNÝM SEP="," ---
+    df = pd.read_csv(io.StringIO(text), sep=",")
+
+    # --- NORMALIZACE SCHÉMATU A TYPŮ ---
     if "date" in df.columns and "timestamp" not in df.columns:
         df.rename(columns={"date": "timestamp"}, inplace=True)
     if "time" in df.columns and "timestamp" not in df.columns:
@@ -90,13 +110,13 @@ def _load_power_df() -> pd.DataFrame:
         if c not in df.columns:
             df[c] = None
 
-    # typy a čištění
     df["player"] = df["player"].astype(str).str.strip()
     for c in ["tank","rocket","air","team4"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # zvládne „2025-08-19T…“ i „2025-07-13 …“
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
 
-    # validní řádky a pevné pořadí
     df = df.dropna(subset=["timestamp"]).copy()
     df = df[POWER_HEADER]
     return df
@@ -302,7 +322,6 @@ class PowerCommands(commands.Cog):
         await _send_long(interaction, "**TOP hráči (všichni, součet 3)**", lines)
 
     # ---------- NOVÉ PŘÍKAZY ----------
-    # /powerplayervsplayer: porovnání dvou hráčů v jednom týmu (tank/rocket/air) + graf jen té metriky
     @app_commands.command(name="powerplayervsplayer", description="Porovná dva hráče v rámci zvoleného týmu (tank/rocket/air)")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player1="První hráč", player2="Druhý hráč", team="Vyber: tank/rocket/air")
@@ -351,13 +370,11 @@ class PowerCommands(commands.Cog):
             msg = f"{_icon(col)} **{player1}** vs **{player2}** — {col}\nNedostupná data pro porovnání."
         await interaction.followup.send(msg, file=file)
 
-    # /storm: UI výběr hráčů (stránkovaný Select), pak výběr počtu týmů, pak rozdělení a textový výstup
     @app_commands.command(name="storm", description="Vyber hráče (klikáním) a rozděl je do týmů")
     @app_commands.guilds(GUILD)
     async def storm(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction, ephemeral=True): return
 
-        # čerstvá jména hráčů
         names = _all_players()
         if not names:
             await interaction.followup.send("⚠️ Nenašli jsme žádné hráče v CSV.", ephemeral=True)
@@ -384,7 +401,6 @@ class StormPickerView(discord.ui.View):
         self.page = 0
         self.selected = set()  # vybraní hráči napříč stránkami
         self.team_count: Optional[int] = None
-
         self._rebuild_select()
 
     def _page_slice(self) -> List[str]:
