@@ -4,7 +4,8 @@
 #   /powerplayer, /powerdebug, /powerenter, /powertopplayer
 # Přidává:
 #   /powerplayervsplayer (autocomplete hráčů + graf jen pro 1 tým)
-#   /storm (UI výběr hráčů s stránkováním + rozdělení do týmů)
+#   /storm (UI výběr hráčů se stránkováním + rozdělení do týmů)
+# OPRAVA: u /storm se už nesnažíme mazat ephemeral zprávu (404), ale jen ji editujeme.
 # ------------------------------------------------------------
 
 import os
@@ -25,7 +26,7 @@ from github_sync import fetch_from_repo, save_to_github, get_remote_meta
 GUILD_ID = int(os.getenv("GUILD_ID", "1231529219029340234"))
 GUILD = discord.Object(id=GUILD_ID)
 
-REPO_POWER_PATH = "data/power_data.csv"   # cesta v repo
+REPO_POWER_PATH = "data/power_data.csv"   # cesta v repo (vs-data-store)
 LOCAL_POWER_FILE = "power_data.csv"       # lokální pracovní soubor
 POWER_HEADER = ["player", "tank", "rocket", "air", "team4", "timestamp"]  # pevné pořadí
 
@@ -183,7 +184,7 @@ class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ---------- EXISTUJÍCÍ PŘÍKAZY (BEZ ZMĚN CHOVÁNÍ) ----------
+    # ---------- EXISTUJÍCÍ PŘÍKAZY ----------
     @app_commands.command(name="powerenter", description="Zapiš hodnoty power pro hráče")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Jméno hráče", tank="Síla tanků", rocket="Síla raket", air="Síla letectva", team4="Síla 4. týmu (volitelné)")
@@ -313,7 +314,6 @@ class PowerCommands(commands.Cog):
     ])
     async def powerplayervsplayer(self, interaction: discord.Interaction, player1: str, player2: str, team: app_commands.Choice[str]):
         if not await _safe_defer(interaction): return
-        # čerstvá data
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
         df = _load_power_df()
         col = team.value
@@ -332,7 +332,6 @@ class PowerCommands(commands.Cog):
         fig, ax = plt.subplots(figsize=(8, 4.5))
         ax.plot(p1["timestamp"], p1[col], marker="o", label=player1)
         ax.plot(p2["timestamp"], p2[col], marker="o", label=player2)
-        # popisky bodů
         for x, y in zip(p1["timestamp"], p1[col]):
             if pd.isna(y): continue
             ax.text(x, y, f"{float(y):.1f}", fontsize=8, ha="left", va="bottom")
@@ -365,13 +364,16 @@ class PowerCommands(commands.Cog):
             return
 
         view = StormPickerView(interaction.user.id, names, parent=self)
-        await interaction.followup.send("Vyber hráče do STORM (můžeš stránkovat a přidávat). Až budeš hotov, klikni **✅ Hotovo**.",
-                                        view=view, ephemeral=True)
-
+        await interaction.followup.send(
+            "Vyber hráče do STORM (můžeš stránkovat a přidávat). "
+            "Až budeš hotov, klikni **✅ Hotovo**, vyber počet týmů a pak **🛡️ Rozdělit týmy**.",
+            view=view,
+            ephemeral=True
+        )
 
 # ====== UI View pro /storm ======
 class StormPickerView(discord.ui.View):
-    """Stránkovaný výběr hráčů (Select má limit 25 položek). Po 'Hotovo' zobrazí výběr počtu týmů a provede rozdělení."""
+    """Stránkovaný výběr hráčů (Select má limit 25 položek). Po 'Hotovo' vybereš počet týmů a bot vygeneruje rozdělení."""
     PAGE_SIZE = 25
 
     def __init__(self, owner_id: int, all_names: List[str], parent: PowerCommands, timeout: Optional[float] = 300):
@@ -383,7 +385,6 @@ class StormPickerView(discord.ui.View):
         self.selected = set()  # vybraní hráči napříč stránkami
         self.team_count: Optional[int] = None
 
-        # dynamicky přidáme Select pro první stránku + ovládací tlačítka
         self._rebuild_select()
 
     def _page_slice(self) -> List[str]:
@@ -392,7 +393,7 @@ class StormPickerView(discord.ui.View):
         return self.all_names[start:end]
 
     def _rebuild_select(self):
-        # odstraníme starý Select, pokud existuje
+        # odstranit starý Select (hráči) pokud existuje
         for child in list(self.children):
             if isinstance(child, discord.ui.Select) and child.custom_id and child.custom_id.startswith("players_page_"):
                 self.remove_item(child)
@@ -415,27 +416,23 @@ class StormPickerView(discord.ui.View):
             if interaction.user.id != self.owner_id:
                 await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
                 return
-            # aktualizuj 'selected' – přidej aktuální výběr, zároveň nech už dříve vybrané
             for v in select.values:
                 self.selected.add(v)
-            # obnov popisky (Vybrán)
             self._rebuild_select()
             await interaction.response.edit_message(view=self)
 
         select.callback = on_select  # type: ignore
         self.add_item(select)
 
-        # pokud jsme už ve fázi výběru týmů, přidej i Select pro počet týmů
+        # pokud už je nastaven počet týmů, zobrazí se i select pro týmy
         self._rebuild_team_count_if_needed()
 
     def _rebuild_team_count_if_needed(self):
-        # nejdřív odstraníme starý Select pro tým, pokud existuje
         for child in list(self.children):
             if isinstance(child, discord.ui.Select) and child.custom_id == "team_count":
                 self.remove_item(child)
         if self.team_count is None:
             return
-        # nabídka 2-6 týmů
         team_opts = [discord.SelectOption(label=str(n), value=str(n)) for n in range(2, 7)]
         team_select = discord.ui.Select(
             placeholder="Vyber počet týmů (2–6)",
@@ -447,7 +444,10 @@ class StormPickerView(discord.ui.View):
                 await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
                 return
             self.team_count = int(team_select.values[0])
-            await interaction.response.edit_message(content=f"Vybráno hráčů: {len(self.selected)} • Počet týmů: {self.team_count}", view=self)
+            await interaction.response.edit_message(
+                content=f"Vybráno hráčů: {len(self.selected)} • Počet týmů: {self.team_count} (upraveno)",
+                view=self
+            )
 
         team_select.callback = on_team_select  # type: ignore
         self.add_item(team_select)
@@ -494,10 +494,13 @@ class StormPickerView(discord.ui.View):
         if len(self.selected) < 2:
             await interaction.response.send_message("Vyber aspoň 2 hráče.", ephemeral=True)
             return
-        # Přepneme do režimu výběru počtu týmů
+        # přepneme do režimu výběru počtu týmů
         self.team_count = 2  # výchozí
         self._rebuild_select()
-        await interaction.response.edit_message(content=f"Vybráno hráčů: {len(self.selected)} • Vyber počet týmů (2–6) a klikni **🛡️ Rozdělit týmy**.", view=self)
+        await interaction.response.edit_message(
+            content=f"Vybráno hráčů: {len(self.selected)} • Počet týmů: {self.team_count} (upraveno)",
+            view=self
+        )
 
     @discord.ui.button(label="🛡️ Rozdělit týmy", style=discord.ButtonStyle.primary)
     async def build_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
@@ -511,7 +514,7 @@ class StormPickerView(discord.ui.View):
             await interaction.response.send_message("Vyber nejprve počet týmů (2–6).", ephemeral=True)
             return
 
-        # Získáme poslední hodnoty a spočítáme síly
+        # 1) Připrav data
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
         df = _load_power_df()
         latest = _latest_by_player(df)
@@ -522,20 +525,18 @@ class StormPickerView(discord.ui.View):
             await interaction.response.send_message("⚠️ Málo vybraných hráčů pro rozdělení (potřeba alespoň 2 + počet týmů).", ephemeral=True)
             return
 
-        # 2 nejsilnější → útočníci
         picked = picked.sort_values("total", ascending=False).reset_index(drop=True)
         attackers = picked.iloc[:2].copy()
         rest = picked.iloc[2:].copy()
 
-        # kapitáni
         k = self.team_count
         captains = rest.iloc[:k].copy()
         rest = rest.iloc[k:].copy()
 
         # inicializace týmů (kapitán + jeho síla)
-        teams: List[Tuple[str, float, List[str]]] = []  # (captain_name, total_power, members)
+        teams: List[Tuple[str, float, List[str]]] = []
         for _, cap in captains.iterrows():
-            teams.append([str(cap["player"]), float(cap["total"]), []])  # name, power, members list
+            teams.append([str(cap["player"]), float(cap["total"]), []])  # name, power, members
 
         # greedy rozdělení zbytku: vždy přidej hráče do týmu s nejnižší silou
         for _, row in rest.iterrows():
@@ -543,7 +544,7 @@ class StormPickerView(discord.ui.View):
             teams[idx][1] += float(row["total"])
             teams[idx][2].append(str(row["player"]))
 
-        # Výstup
+        # Výstup (text)
         out_lines = []
         out_lines.append(f"⚔️ Attack: 🛡️ {attackers.iloc[0]['player']}, 🛡️ {attackers.iloc[1]['player']}\n")
         for i, (cap_name, power, members) in enumerate(teams, start=1):
@@ -551,10 +552,14 @@ class StormPickerView(discord.ui.View):
             out_lines.append(f"   🧑‍🤝‍🧑 Hráči: {', '.join(members) if members else '—'}")
             out_lines.append(f"   🔋 Total power: {power:,.1f}\n")
 
-        # Zavřít view a poslat finální text (veřejně)
-        self.stop()
-        await interaction.message.delete()
+        # 2) Edit ephemerální zprávy (zruší komponenty) – žádné mazání
+        await interaction.response.edit_message(content="Týmy vygenerovány 👇", view=None)
+
+        # 3) Pošleme veřejně do kanálu
         await interaction.channel.send("\n".join(out_lines))
+
+        # 4) ukončíme view
+        self.stop()
 
 # ====== REGISTRACE COGU ======
 async def setup_power_commands(bot: commands.Bot):
