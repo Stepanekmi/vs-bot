@@ -1,14 +1,17 @@
 # power_slash.py
 # ------------------------------------------------------------
-# Zachovává stávající příkazy:
+# Stávající příkazy:
 #   /powerplayer, /powerdebug, /powerenter, /powertopplayer
-# Přidává:
-#   /powerplayervsplayer (autocomplete hráčů + graf jen pro 1 tým)
-#   /storm (UI výběr hráčů se stránkováním + rozdělení do týmů)
+# Nové:
+#   /powerplayervsplayer (porovnání dvou hráčů v jednom teamu + graf)
+#   /storm (klikací výběr hráčů + rozdělení do týmů)
+# Diagnostika:
+#   /powernames, /powerreloadnames
+#
 # OPRAVY:
-#   - /storm ne-maže ephemeral zprávu (404), jen ji edituje.
-#   - Načítání CSV robustní (TAB/; -> ,), pevné pořadí sloupců.
-#   - Autocomplete NEVOLÁ síť – čte jen lokální CSV + používá cache.
+#   - robustní načítání CSV (TAB/; -> ,), fix timestampů, pevné pořadí sloupců
+#   - autocomplete NEVOLÁ síť – bere lokální CSV + cache (rychlé a spolehlivé)
+#   - /storm: u finálního kroku se ephemeral zpráva jen edituje (žádné mazání 404)
 # ------------------------------------------------------------
 
 import os
@@ -175,37 +178,44 @@ def _latest_by_player(df: pd.DataFrame) -> pd.DataFrame:
     """Poslední řádek za hráče podle timestamp."""
     return df.sort_values("timestamp").groupby("player", as_index=False).tail(1)
 
-# ====== AUTOCOMPLETE ======
-def _all_players() -> List[str]:
-    """Rychlý seznam hráčů POUZE z lokálního CSV (bez sítě). Seřazený podle posledního záznamu (nejnovější nahoře).
-    Fallback na cache, aby autocomplete vždy něco vrátil.
-    """
+# === PLAYERS CACHE helpers (diagnostika) ===
+def _rebuild_players_cache_from_local() -> int:
+    """Načte lokální CSV a přestaví PLAYERS_CACHE (nejnovější nahoře). Vrátí počet hráčů."""
     global PLAYERS_CACHE
     try:
         df = _load_power_df()
         if df.empty:
-            return PLAYERS_CACHE
+            PLAYERS_CACHE = []
+            return 0
         latest = df.sort_values("timestamp").groupby("player", as_index=False).tail(1)
-        # seřadit podle timestamp, nejnovější první
         latest = latest.sort_values("timestamp", ascending=False)
         names_sorted = latest["player"].astype(str).str.strip().tolist()
-        # deduplikace zachovávající pořadí
         seen = set()
-        ordered_unique = [n for n in names_sorted if not (n in seen or seen.add(n))]
-        PLAYERS_CACHE = ordered_unique
-        return ordered_unique
+        PLAYERS_CACHE = [n for n in names_sorted if not (n in seen or seen.add(n))]
+        return len(PLAYERS_CACHE)
     except Exception as e:
-        print(f"[autocomplete] load failed: {e}")
-        return PLAYERS_CACHE or []
+        print(f"[players-cache] rebuild failed: {e}")
+        return -1
+
+# ====== AUTOCOMPLETE ======
+def _all_players() -> List[str]:
+    """Rychlý seznam hráčů POUZE z lokálního CSV (bez sítě). Fallback na cache.
+    Pokud cache není naplněná, pokusí se ji postavit.
+    """
+    global PLAYERS_CACHE
+    if not PLAYERS_CACHE:
+        _rebuild_players_cache_from_local()
+    return PLAYERS_CACHE or []
 
 async def player_autocomplete(_: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
     try:
         names = _all_players()
         if current:
             q = current.casefold()
-            names = [n for n in names if q in n.casefold()]  # podřetězcové vyhledávání
+            names = [n for n in names if q in n.casefold()]  # podřetězcové hledání
         return [app_commands.Choice(name=n, value=n) for n in names[:25]]
-    except Exception:
+    except Exception as e:
+        print(f"[autocomplete] error: {e}")
         fallback = (PLAYERS_CACHE[:25] if not current else
                     [n for n in PLAYERS_CACHE if current.casefold() in n.casefold()][:25])
         return [app_commands.Choice(name=n, value=n) for n in fallback]
@@ -214,6 +224,8 @@ async def player_autocomplete(_: discord.Interaction, current: str) -> List[app_
 class PowerCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # naplníme cache hned při loadu Cogu
+        _rebuild_players_cache_from_local()
 
     # ---------- EXISTUJÍCÍ PŘÍKAZY ----------
     @app_commands.command(name="powerenter", description="Zapiš hodnoty power pro hráče")
@@ -256,6 +268,9 @@ class PowerCommands(commands.Cog):
                 "⚠️ Zapsáno lokálně, commit na GitHub **neproběhl** – zkontroluj GH_TOKEN/OWNER/REPO/BRANCH a logy.",
                 ephemeral=True
             )
+
+        # po úspěšném zápisu aktualizuj cache (ať autocomplete hned zná nová jména)
+        _rebuild_players_cache_from_local()
 
     @app_commands.command(name="powerplayer", description="Vývoj power pro hráče (graf + sekvence změn po týmech)")
     @app_commands.guilds(GUILD)
@@ -394,8 +409,28 @@ class PowerCommands(commands.Cog):
             ephemeral=True
         )
 
+    # ---------- Diagnostika hráčů / cache ----------
+    @app_commands.command(name="powernames", description="Diagnostika: kolik hráčů je v cache a kdo to je (prvních 30).")
+    @app_commands.guilds(GUILD)
+    async def powernames(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        cnt = len(PLAYERS_CACHE)
+        sample = ", ".join(PLAYERS_CACHE[:30])
+        await interaction.followup.send(f"Cache hráčů: {cnt}\nPrvních 30: {sample or '(prázdné)'}", ephemeral=True)
+
+    @app_commands.command(name="powerreloadnames", description="Znovu načti seznam hráčů z lokálního CSV (bez sítě).")
+    @app_commands.guilds(GUILD)
+    async def powerreloadnames(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        n = _rebuild_players_cache_from_local()
+        if n >= 0:
+            await interaction.followup.send(f"✅ Cache přestavěna z lokálního CSV. Počet hráčů: {n}", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Nepovedlo se načíst lokální CSV – mrkni do logu.", ephemeral=True)
+
 # ====== UI View pro /storm ======
 class StormPickerView(discord.ui.View):
+    """Stránkovaný výběr hráčů (Select má limit 25 položek). Po 'Hotovo' vybereš počet týmů a bot vygeneruje rozdělení."""
     PAGE_SIZE = 25
 
     def __init__(self, owner_id: int, all_names: List[str], parent: PowerCommands, timeout: Optional[float] = 300):
@@ -404,7 +439,7 @@ class StormPickerView(discord.ui.View):
         self.all_names = all_names
         self.parent = parent
         self.page = 0
-        self.selected = set()
+        self.selected = set()  # vybraní hráči napříč stránkami
         self.team_count: Optional[int] = None
         self._rebuild_select()
 
@@ -414,6 +449,7 @@ class StormPickerView(discord.ui.View):
         return self.all_names[start:end]
 
     def _rebuild_select(self):
+        # odstranit starý Select (hráči) pokud existuje
         for child in list(self.children):
             if isinstance(child, discord.ui.Select) and child.custom_id and child.custom_id.startswith("players_page_"):
                 self.remove_item(child)
@@ -443,6 +479,8 @@ class StormPickerView(discord.ui.View):
 
         select.callback = on_select  # type: ignore
         self.add_item(select)
+
+        # pokud už je nastaven počet týmů, zobrazí se i select pro týmy
         self._rebuild_team_count_if_needed()
 
     def _rebuild_team_count_if_needed(self):
@@ -470,6 +508,7 @@ class StormPickerView(discord.ui.View):
         team_select.callback = on_team_select  # type: ignore
         self.add_item(team_select)
 
+    # ----- Buttons -----
     @discord.ui.button(label="⬅️ Předchozí", style=discord.ButtonStyle.secondary)
     async def prev_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
@@ -511,7 +550,8 @@ class StormPickerView(discord.ui.View):
         if len(self.selected) < 2:
             await interaction.response.send_message("Vyber aspoň 2 hráče.", ephemeral=True)
             return
-        self.team_count = 2
+        # přepneme do režimu výběru počtu týmů
+        self.team_count = 2  # výchozí
         self._rebuild_select()
         await interaction.response.edit_message(
             content=f"Vybráno hráčů: {len(self.selected)} • Počet týmů: {self.team_count} (upraveno)",
@@ -530,6 +570,7 @@ class StormPickerView(discord.ui.View):
             await interaction.response.send_message("Vyber nejprve počet týmů (2–6).", ephemeral=True)
             return
 
+        # 1) Připrav data
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
         df = _load_power_df()
         latest = _latest_by_player(df)
@@ -548,15 +589,18 @@ class StormPickerView(discord.ui.View):
         captains = rest.iloc[:k].copy()
         rest = rest.iloc[k:].copy()
 
+        # inicializace týmů (kapitán + jeho síla)
         teams: List[Tuple[str, float, List[str]]] = []
         for _, cap in captains.iterrows():
-            teams.append([str(cap["player"]), float(cap["total"]), []])
+            teams.append([str(cap["player"]), float(cap["total"]), []])  # name, power, members
 
+        # greedy rozdělení zbytku: vždy přidej hráče do týmu s nejnižší silou
         for _, row in rest.iterrows():
             idx = min(range(len(teams)), key=lambda i: teams[i][1])
             teams[idx][1] += float(row["total"])
             teams[idx][2].append(str(row["player"]))
 
+        # Výstup (text)
         out_lines = []
         out_lines.append(f"⚔️ Attack: 🛡️ {attackers.iloc[0]['player']}, 🛡️ {attackers.iloc[1]['player']}\n")
         for i, (cap_name, power, members) in enumerate(teams, start=1):
@@ -564,8 +608,13 @@ class StormPickerView(discord.ui.View):
             out_lines.append(f"   🧑‍🤝‍🧑 Hráči: {', '.join(members) if members else '—'}")
             out_lines.append(f"   🔋 Total power: {power:,.1f}\n")
 
+        # 2) Edit ephemerální zprávy (zruší komponenty) – žádné mazání
         await interaction.response.edit_message(content="Týmy vygenerovány 👇", view=None)
+
+        # 3) Pošleme veřejně do kanálu
         await interaction.channel.send("\n".join(out_lines))
+
+        # 4) ukončíme view
         self.stop()
 
 # ====== REGISTRACE COGU ======
