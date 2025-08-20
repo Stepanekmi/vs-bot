@@ -22,7 +22,6 @@ import math
 from typing import Optional, List, Tuple
 
 import discord
-from discord import Interaction
 from discord import app_commands
 from discord.ext import commands
 
@@ -43,7 +42,7 @@ POWER_HEADER = ["player", "tank", "rocket", "air", "team4", "timestamp"]  # pevn
 PLAYERS_CACHE: List[str] = []
 
 # ====== HELPERY ======
-async def _safe_defer(interaction: Interaction, ephemeral: bool = False) -> bool:
+async def _safe_defer(interaction: discord.Interaction, ephemeral: bool = False) -> bool:
     try:
         if not interaction.response.is_done():
             await interaction.response.defer(thinking=True, ephemeral=ephemeral)
@@ -155,7 +154,7 @@ def _plot_series(df: pd.DataFrame, title: str) -> discord.File:
     buf = io.BytesIO(); fig.tight_layout(); fig.savefig(buf, format="png"); plt.close(fig); buf.seek(0)
     return discord.File(buf, filename="power.png")
 
-async def _send_long(interaction: Interaction, header: str, lines: List[str]):
+async def _send_long(interaction: discord.Interaction, header: str, lines: List[str]):
     chunk = (header + "\n") if header else ""
     for line in lines:
         if len(chunk) + len(line) + 1 > 1900:
@@ -254,7 +253,7 @@ class PowerCommands(commands.Cog):
     @app_commands.command(name="powerenter", description="Zapiš hodnoty power pro hráče")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Jméno hráče", tank="Síla tanků", rocket="Síla raket", air="Síla letectva", team4="Síla 4. týmu (volitelné)")
-    async def powerenter(self, interaction: Interaction, player: str, tank: str, rocket: str, air: str, team4: Optional[str] = None):
+    async def powerenter(self, interaction: discord.Interaction, player: str, tank: str, rocket: str, air: str, team4: Optional[str] = None):
         if not await _safe_defer(interaction, ephemeral=True): return
 
         # 1) merge-up z GitHubu (API) – mimo autocomplete nevadí síť
@@ -299,7 +298,7 @@ class PowerCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Jméno hráče")
     @app_commands.autocomplete(player=player_autocomplete)
-    async def powerplayer(self, interaction: Interaction, player: str):
+    async def powerplayer(self, interaction: discord.Interaction, player: str):
         if not await _safe_defer(interaction): return
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
 
@@ -326,191 +325,35 @@ class PowerCommands(commands.Cog):
         await interaction.followup.send(f"**{player}** — {headline}", file=file)
         await _send_long(interaction, "", lines)
 
-    @app_commands.command(name="powerdebug", description="Detailní diagnostika načítání/syncu")
+    @app_commands.command(name="powerdebug", description="Porovná lokální a vzdálené CSV (rychlá diagnostika)")
     @app_commands.guilds(GUILD)
-    async def powerdebug(self, interaction: Interaction):
+    async def powerdebug(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction, ephemeral=True): return
-
-        report = []
-
-        # Základní info o souborech
         try:
-            l_exists = os.path.exists(LOCAL_POWER_FILE)
-            l_size = os.path.getsize(LOCAL_POWER_FILE) if l_exists else 0
-            report.append(f"📄 Local file: `{LOCAL_POWER_FILE}`, exists={l_exists}, size={l_size}")
+            ldf = pd.read_csv(LOCAL_POWER_FILE, sep=None, engine="python"); l_rows = len(ldf)
+            l_tail = ldf.tail(3).to_string(index=False)
         except Exception as e:
-            report.append(f"📄 Local file error: {e}")
-
-        # 1) Čtení LOCAL (syrové)
-        try:
-            ldf_raw = pd.read_csv(LOCAL_POWER_FILE, sep=None, engine="python")
-            report.append(f"Local RAW rows={len(ldf_raw)}")
-            report.append("Local RAW tail(3):\\n```\\n" + ldf_raw.tail(3).to_string(index=False) + "\\n```")
-        except Exception as e:
-            report.append(f"Local RAW read error: {e}")
-            ldf_raw = None
-
-        # 2) Čtení REMOTE (fetch -> tmp)
+            l_rows = -1; l_tail = f"read error: {e}"
         sha, size = get_remote_meta(REPO_POWER_PATH)
         tmp = "_tmp_power.csv"
         fetched = fetch_from_repo(REPO_POWER_PATH, tmp, prefer_api=True)
-        report.append(f"🌐 Remote: sha={sha}, size={size}, fetched={bool(fetched)}")
-
-        try:
-            rdf_raw = pd.read_csv(tmp, sep=None, engine="python") if fetched else None
-            if rdf_raw is not None:
-                report.append(f"Remote RAW rows={len(rdf_raw)}")
-                report.append("Remote RAW tail(3):\\n```\\n" + rdf_raw.tail(3).to_string(index=False) + "\\n```")
-            else:
-                report.append("Remote RAW: n/a")
-        except Exception as e:
-            report.append(f"Remote RAW read error: {e}")
-            rdf_raw = None
-
-        # 3) Parsování obou stran stejně jako _load_power_df (bez side-effectů)
-        def _parse_like_loader(df):
-            if df is None: return pd.DataFrame(columns=POWER_HEADER)
-            m = df.copy()
-            for c in POWER_HEADER:
-                if c not in m.columns:
-                    m[c] = None
-            m = m[POWER_HEADER].copy()
-            for c in ["tank","rocket","air","team4"]:
-                m[c] = pd.to_numeric(m[c], errors="coerce")
-            m["timestamp"] = pd.to_datetime(m["timestamp"], errors="coerce", utc=True)
-            m["player"] = m["player"].astype(str).str.strip()
-            m = m.dropna(subset=["timestamp"]).sort_values("timestamp")
-            return m
-
-        ldf = _parse_like_loader(ldf_raw)
-        rdf = _parse_like_loader(rdf_raw)
-
-        report.append(f"Local PARSED rows={len(ldf)}")
-        report.append("Local PARSED tail(3):\\n```\\n" + (ldf.tail(3).to_string(index=False) if not ldf.empty else "—") + "\\n```")
-        report.append(f"Remote PARSED rows={len(rdf)}")
-        report.append("Remote PARSED tail(3):\\n```\\n" + (rdf.tail(3).to_string(index=False) if not rdf.empty else "—") + "\\n```")
-
-        # 4) Merge simulace (bez zápisu)
-        merged = pd.concat([ldf, rdf], ignore_index=True)
-        before = len(merged)
-        merged = merged.drop_duplicates(subset=POWER_HEADER, keep="last").sort_values("timestamp")
-        report.append(f"Merge: concat={before}, after_dedup={len(merged)}")
-
-        # Rozdíly: co je v merged a není v local parsed
-        if not merged.empty and not ldf.empty:
-            diff = merged.merge(ldf.assign(_in_local=True), how="left", on=POWER_HEADER)
-            missing = diff[diff["_in_local"].isna()].drop(columns=["_in_local"])
-            if not missing.empty:
-                mx = missing.tail(5)
-                report.append("Rows present after MERGE but missing in Local PARSED (tail):\\n```\\n" + mx.to_string(index=False) + "\\n```")
-            else:
-                report.append("No rows missing in Local after MERGE.")
+        if fetched:
+            try:
+                rdf = pd.read_csv(tmp, sep=None, engine="python"); r_rows = len(rdf)
+                r_tail = rdf.tail(3).to_string(index=False)
+            except Exception as e:
+                r_rows = -1; r_tail = f"read error: {e}"
         else:
-            report.append("Diff check skipped (empty frames).")
-
-        # 5) Poslední řádky po hráčích (rychlá kontrola)
-        try:
-            latest = merged.sort_values("timestamp").groupby("player", as_index=False).tail(1)
-            report.append("Latest by player (tail 10):\\n```\\n" + latest.sort_values("timestamp").tail(10).to_string(index=False) + "\\n```")
-        except Exception as e:
-            report.append(f"Latest by player error: {e}")
-
-        await interaction.followup.send("\\n".join(report), ephemeral=True)
-
-@app_commands.command(name="powerdebug", description="Detailní diagnostika načítání/syncu")
-@app_commands.guilds(GUILD)
-async def powerdebug(self, interaction: Interaction):
-    if not await _safe_defer(interaction, ephemeral=True): return
-
-    report = []
-
-    # Základní info o souborech
-    try:
-        l_exists = os.path.exists(LOCAL_POWER_FILE)
-        l_size = os.path.getsize(LOCAL_POWER_FILE) if l_exists else 0
-        report.append(f"📄 Local file: `{LOCAL_POWER_FILE}`, exists={l_exists}, size={l_size}")
-    except Exception as e:
-        report.append(f"📄 Local file error: {e}")
-
-    # 1) Čtení LOCAL (syrové)
-    try:
-        ldf_raw = pd.read_csv(LOCAL_POWER_FILE, sep=None, engine="python")
-        report.append(f"Local RAW rows={len(ldf_raw)}")
-        report.append("Local RAW tail(3):\\n```\\n" + ldf_raw.tail(3).to_string(index=False) + "\\n```")
-    except Exception as e:
-        report.append(f"Local RAW read error: {e}")
-        ldf_raw = None
-
-    # 2) Čtení REMOTE (fetch -> tmp)
-    sha, size = get_remote_meta(REPO_POWER_PATH)
-    tmp = "_tmp_power.csv"
-    fetched = fetch_from_repo(REPO_POWER_PATH, tmp, prefer_api=True)
-    report.append(f"🌐 Remote: sha={sha}, size={size}, fetched={bool(fetched)}")
-
-    try:
-        rdf_raw = pd.read_csv(tmp, sep=None, engine="python") if fetched else None
-        if rdf_raw is not None:
-            report.append(f"Remote RAW rows={len(rdf_raw)}")
-            report.append("Remote RAW tail(3):\\n```\\n" + rdf_raw.tail(3).to_string(index=False) + "\\n```")
-        else:
-            report.append("Remote RAW: n/a")
-    except Exception as e:
-        report.append(f"Remote RAW read error: {e}")
-        rdf_raw = None
-
-    # 3) Parsování obou stran stejně jako _load_power_df (bez side-effectů)
-    def _parse_like_loader(df):
-        if df is None: return pd.DataFrame(columns=POWER_HEADER)
-        m = df.copy()
-        for c in POWER_HEADER:
-            if c not in m.columns:
-                m[c] = None
-        m = m[POWER_HEADER].copy()
-        for c in ["tank","rocket","air","team4"]:
-            m[c] = pd.to_numeric(m[c], errors="coerce")
-        m["timestamp"] = pd.to_datetime(m["timestamp"], errors="coerce", utc=True)
-        m["player"] = m["player"].astype(str).str.strip()
-        m = m.dropna(subset=["timestamp"]).sort_values("timestamp")
-        return m
-
-    ldf = _parse_like_loader(ldf_raw)
-    rdf = _parse_like_loader(rdf_raw)
-
-    report.append(f"Local PARSED rows={len(ldf)}")
-    report.append("Local PARSED tail(3):\\n```\\n" + (ldf.tail(3).to_string(index=False) if not ldf.empty else "—") + "\\n```")
-    report.append(f"Remote PARSED rows={len(rdf)}")
-    report.append("Remote PARSED tail(3):\\n```\\n" + (rdf.tail(3).to_string(index=False) if not rdf.empty else "—") + "\\n```")
-
-    # 4) Merge simulace (bez zápisu)
-    merged = pd.concat([ldf, rdf], ignore_index=True)
-    before = len(merged)
-    merged = merged.drop_duplicates(subset=POWER_HEADER, keep="last").sort_values("timestamp")
-    report.append(f"Merge: concat={before}, after_dedup={len(merged)}")
-
-    # Rozdíly: co je v merged a není v local parsed
-    if not merged.empty and not ldf.empty:
-        diff = merged.merge(ldf.assign(_in_local=True), how="left", on=POWER_HEADER)
-        missing = diff[diff["_in_local"].isna()].drop(columns=["_in_local"])
-        if not missing.empty:
-            mx = missing.tail(5)
-            report.append("Rows present after MERGE but missing in Local PARSED (tail):\\n```\\n" + mx.to_string(index=False) + "\\n```")
-        else:
-            report.append("No rows missing in Local after MERGE.")
-    else:
-        report.append("Diff check skipped (empty frames).")
-
-    # 5) Poslední řádky po hráčích (rychlá kontrola)
-    try:
-        latest = merged.sort_values("timestamp").groupby("player", as_index=False).tail(1)
-        report.append("Latest by player (tail 10):\\n```\\n" + latest.sort_values("timestamp").tail(10).to_string(index=False) + "\\n```")
-    except Exception as e:
-        report.append(f"Latest by player error: {e}")
-
-    await interaction.followup.send("\\n".join(report), ephemeral=True)
+            r_rows = -1; r_tail = "fetch failed"
+        msg = (
+            f"**Local**: rows={l_rows}\n```\n{l_tail}\n```\n"
+            f"**Remote**: sha={sha}, size={size}, rows={r_rows}\n```\n{r_tail}\n```"
+        )
+        await interaction.followup.send(msg, ephemeral=True)
 
     @app_commands.command(name="powertopplayer", description="Všichni hráči podle součtu (tank+rocket+air)")
     @app_commands.guilds(GUILD)
-    async def powertopplayer(self, interaction: Interaction):
+    async def powertopplayer(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction): return
         df = _load_power_df()
         if df.empty:
@@ -532,7 +375,7 @@ async def powerdebug(self, interaction: Interaction):
         app_commands.Choice(name="rocket", value="rocket"),
         app_commands.Choice(name="air", value="air"),
     ])
-    async def powerplayervsplayer(self, interaction: Interaction, player1: str, player2: str, team: app_commands.Choice[str]):
+    async def powerplayervsplayer(self, interaction: discord.Interaction, player1: str, player2: str, team: app_commands.Choice[str]):
         if not await _safe_defer(interaction): return
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
         df = _load_power_df()
@@ -572,7 +415,7 @@ async def powerdebug(self, interaction: Interaction):
 
     @app_commands.command(name="storm", description="Vyber hráče (klikáním) a rozděl je do týmů")
     @app_commands.guilds(GUILD)
-    async def storm(self, interaction: Interaction):
+    async def storm(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction, ephemeral=True): return
 
         names = _all_players()
@@ -591,7 +434,7 @@ async def powerdebug(self, interaction: Interaction):
     # ---------- Diagnostika hráčů / cache ----------
     @app_commands.command(name="powernames", description="Diagnostika: kolik hráčů je v cache a kdo to je (prvních 30).")
     @app_commands.guilds(GUILD)
-    async def powernames(self, interaction: Interaction):
+    async def powernames(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         cnt = len(PLAYERS_CACHE)
         sample = ", ".join(PLAYERS_CACHE[:30])
@@ -599,7 +442,7 @@ async def powerdebug(self, interaction: Interaction):
 
     @app_commands.command(name="powerreloadnames", description="Znovu načti seznam hráčů z lokálního CSV (bez sítě).")
     @app_commands.guilds(GUILD)
-    async def powerreloadnames(self, interaction: Interaction):
+    async def powerreloadnames(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         n = _rebuild_players_cache_from_local()
         if n >= 0:
@@ -647,7 +490,7 @@ class StormPickerView(discord.ui.View):
             custom_id=f"players_page_{self.page}"
         )
 
-        async def on_select(interaction: Interaction):
+        async def on_select(interaction: discord.Interaction):
             if interaction.user.id != self.owner_id:
                 await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
                 return
@@ -674,7 +517,7 @@ class StormPickerView(discord.ui.View):
             min_values=1, max_values=1, options=team_opts, custom_id="team_count"
         )
 
-        async def on_team_select(interaction: Interaction):
+        async def on_team_select(interaction: discord.Interaction):
             if interaction.user.id != self.owner_id:
                 await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
                 return
@@ -689,7 +532,7 @@ class StormPickerView(discord.ui.View):
 
     # ----- Buttons -----
     @discord.ui.button(label="⬅️ Předchozí", style=discord.ButtonStyle.secondary)
-    async def prev_btn(self, interaction: Interaction, _: discord.ui.Button):
+    async def prev_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
             return
@@ -701,7 +544,7 @@ class StormPickerView(discord.ui.View):
             await interaction.response.defer()
 
     @discord.ui.button(label="Další ➡️", style=discord.ButtonStyle.secondary)
-    async def next_btn(self, interaction: Interaction, _: discord.ui.Button):
+    async def next_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
             return
@@ -713,7 +556,7 @@ class StormPickerView(discord.ui.View):
             await interaction.response.defer()
 
     @discord.ui.button(label="🧹 Vyčistit výběr", style=discord.ButtonStyle.secondary)
-    async def clear_btn(self, interaction: Interaction, _: discord.ui.Button):
+    async def clear_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
             return
@@ -722,7 +565,7 @@ class StormPickerView(discord.ui.View):
         await interaction.response.edit_message(content="Výběr vyčištěn.", view=self)
 
     @discord.ui.button(label="✅ Hotovo", style=discord.ButtonStyle.success)
-    async def done_btn(self, interaction: Interaction, _: discord.ui.Button):
+    async def done_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
             return
@@ -738,7 +581,7 @@ class StormPickerView(discord.ui.View):
         )
 
     @discord.ui.button(label="🛡️ Rozdělit týmy", style=discord.ButtonStyle.primary)
-    async def build_btn(self, interaction: Interaction, _: discord.ui.Button):
+    async def build_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
             return
