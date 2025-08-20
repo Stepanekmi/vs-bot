@@ -386,6 +386,7 @@ class PowerCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     async def powerdebug(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction, ephemeral=True): return
+        _sync_merge_with_remote()
         try:
             ldf = pd.read_csv(LOCAL_POWER_FILE, sep=None, engine="python"); l_rows = len(ldf)
             l_tail = ldf.tail(3).to_string(index=False)
@@ -412,7 +413,7 @@ class PowerCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     async def powertopplayer(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction): return
-        df = _load_power_df()
+        df = _sync_merge_with_remote()
         if df.empty:
             await interaction.followup.send("⚠️ Žádná power data zatím nejsou."); return
         grp = df.groupby("player", as_index=False).agg({"tank":"max","rocket":"max","air":"max"}).fillna(0.0)
