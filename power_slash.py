@@ -92,19 +92,6 @@ def _load_power_df() -> pd.DataFrame:
     """
     _ensure_csv(LOCAL_POWER_FILE, POWER_HEADER)
 
-    # --- merge remote into local to ensure freshest data for all readers ---
-    try:
-        tmp = "_tmp_power.csv"
-        if fetch_from_repo(REPO_POWER_PATH, tmp, prefer_api=True):
-            _ensure_csv(LOCAL_POWER_FILE, POWER_HEADER)
-            _local_df = _load_power_df_from_path(LOCAL_POWER_FILE)
-            _remote_df = _load_power_df_from_path(tmp)
-            _both = pd.concat([_local_df, _remote_df], ignore_index=True)                     .drop_duplicates(subset=POWER_HEADER, keep="last")                     .sort_values("timestamp")
-            _both.to_csv(LOCAL_POWER_FILE, index=False)
-    except Exception as _e:
-        print(f"[merge-warning] {_e}")
-
-
     # 1) načti syrový text
     with open(LOCAL_POWER_FILE, "rb") as f:
         raw = f.read()
