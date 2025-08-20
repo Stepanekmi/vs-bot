@@ -515,14 +515,14 @@ class EraseModeView(discord.ui.View):
         return True
 
     @discord.ui.button(label="🗑️ Smazat vše", style=discord.ButtonStyle.danger, custom_id="erase_all")
-    async def erase_all(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def erase_all(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
         # Potvrzovací view pro smazání všeho
         view = EraseAllConfirmView(self.owner_id, self.player, self.parent)
         await interaction.response.edit_message(content=f"⚠️ Opravdu smazat **všechny** záznamy hráče **{self.player}**?", view=view)
 
     @discord.ui.button(label="📝 Vybrat záznamy", style=discord.ButtonStyle.primary, custom_id="erase_pick")
-    async def erase_pick(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def erase_pick(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
         view = EraseRecordPickerView(self.owner_id, self.player, self.rows, self.parent, total_count=self.total_count)
         await interaction.response.edit_message(content=f"Vyber záznamy hráče **{self.player}** k odstranění:", view=view)
@@ -542,7 +542,7 @@ class EraseAllConfirmView(discord.ui.View):
         return True
 
     @discord.ui.button(label="✅ Potvrdit smazání všeho", style=discord.ButtonStyle.danger, custom_id="erase_all_confirm")
-    async def confirm(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
 
         df = _load_power_df()
@@ -564,7 +564,7 @@ class EraseAllConfirmView(discord.ui.View):
         self.stop()
 
     @discord.ui.button(label="Zrušit", style=discord.ButtonStyle.secondary, custom_id="erase_all_cancel")
-    async def cancel(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
         await interaction.response.edit_message(content="Zrušeno.", view=None)
         self.stop()
@@ -610,7 +610,7 @@ class EraseRecordPickerView(discord.ui.View):
         return True
 
     @discord.ui.button(label="🗑️ Smazat vybrané", style=discord.ButtonStyle.danger, custom_id="erase_rows_confirm")
-    async def erase_selected(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def erase_selected(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
         if not self.selected_idx:
             await interaction.response.send_message("Vyber minimálně jeden záznam.", ephemeral=True)
@@ -647,7 +647,7 @@ class EraseRecordPickerView(discord.ui.View):
         self.stop()
 
     @discord.ui.button(label="Zrušit", style=discord.ButtonStyle.secondary, custom_id="erase_rows_cancel")
-    async def cancel(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
         await interaction.response.edit_message(content="Zrušeno.", view=None)
         self.stop()
