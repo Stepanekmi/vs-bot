@@ -345,10 +345,7 @@ async def powerdebug(self, interaction: discord.Interaction):
     try:
         ldf_raw = pd.read_csv(LOCAL_POWER_FILE, sep=None, engine="python")
         report.append(f"Local RAW rows={len(ldf_raw)}")
-        report.append("Local RAW tail(3):
-```
-" + ldf_raw.tail(3).to_string(index=False) + "
-```")
+        report.append("Local RAW tail(3):\\n```\\n" + ldf_raw.tail(3).to_string(index=False) + "\\n```")
     except Exception as e:
         report.append(f"Local RAW read error: {e}")
         ldf_raw = None
@@ -363,10 +360,7 @@ async def powerdebug(self, interaction: discord.Interaction):
         rdf_raw = pd.read_csv(tmp, sep=None, engine="python") if fetched else None
         if rdf_raw is not None:
             report.append(f"Remote RAW rows={len(rdf_raw)}")
-            report.append("Remote RAW tail(3):
-```
-" + rdf_raw.tail(3).to_string(index=False) + "
-```")
+            report.append("Remote RAW tail(3):\\n```\\n" + rdf_raw.tail(3).to_string(index=False) + "\\n```")
         else:
             report.append("Remote RAW: n/a")
     except Exception as e:
@@ -392,15 +386,9 @@ async def powerdebug(self, interaction: discord.Interaction):
     rdf = _parse_like_loader(rdf_raw)
 
     report.append(f"Local PARSED rows={len(ldf)}")
-    report.append("Local PARSED tail(3):
-```
-" + (ldf.tail(3).to_string(index=False) if not ldf.empty else "—") + "
-```")
+    report.append("Local PARSED tail(3):\\n```\\n" + (ldf.tail(3).to_string(index=False) if not ldf.empty else "—") + "\\n```")
     report.append(f"Remote PARSED rows={len(rdf)}")
-    report.append("Remote PARSED tail(3):
-```
-" + (rdf.tail(3).to_string(index=False) if not rdf.empty else "—") + "
-```")
+    report.append("Remote PARSED tail(3):\\n```\\n" + (rdf.tail(3).to_string(index=False) if not rdf.empty else "—") + "\\n```")
 
     # 4) Merge simulace (bez zápisu)
     merged = pd.concat([ldf, rdf], ignore_index=True)
@@ -414,10 +402,7 @@ async def powerdebug(self, interaction: discord.Interaction):
         missing = diff[diff["_in_local"].isna()].drop(columns=["_in_local"])
         if not missing.empty:
             mx = missing.tail(5)
-            report.append("Rows present after MERGE but missing in Local PARSED (tail):
-```
-" + mx.to_string(index=False) + "
-```")
+            report.append("Rows present after MERGE but missing in Local PARSED (tail):\\n```\\n" + mx.to_string(index=False) + "\\n```")
         else:
             report.append("No rows missing in Local after MERGE.")
     else:
@@ -426,15 +411,11 @@ async def powerdebug(self, interaction: discord.Interaction):
     # 5) Poslední řádky po hráčích (rychlá kontrola)
     try:
         latest = merged.sort_values("timestamp").groupby("player", as_index=False).tail(1)
-        report.append("Latest by player (tail 10):
-```
-" + latest.sort_values("timestamp").tail(10).to_string(index=False) + "
-```")
+        report.append("Latest by player (tail 10):\\n```\\n" + latest.sort_values("timestamp").tail(10).to_string(index=False) + "\\n```")
     except Exception as e:
         report.append(f"Latest by player error: {e}")
 
-    await interaction.followup.send("
-".join(report), ephemeral=True)
+    await interaction.followup.send("\\n".join(report), ephemeral=True)
 
     @app_commands.command(name="powertopplayer", description="Všichni hráči podle součtu (tank+rocket+air)")
     @app_commands.guilds(GUILD)
