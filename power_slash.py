@@ -327,7 +327,7 @@ class PowerCommands(commands.Cog):
 
     @app_commands.command(name="powerdebug", description="Detailní diagnostika načítání/syncu")
     @app_commands.guilds(GUILD)
-    async def powerdebug(self, interaction: discord.Interaction):
+    async def powerdebug(self, interaction):
         if not await _safe_defer(interaction, ephemeral=True): return
 
         report = []
@@ -418,7 +418,7 @@ class PowerCommands(commands.Cog):
 
 @app_commands.command(name="powerdebug", description="Detailní diagnostika načítání/syncu")
 @app_commands.guilds(GUILD)
-async def powerdebug(self, interaction: discord.Interaction):
+async def powerdebug(self, interaction):
     if not await _safe_defer(interaction, ephemeral=True): return
 
     report = []
