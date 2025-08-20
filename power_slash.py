@@ -92,6 +92,19 @@ def _load_power_df() -> pd.DataFrame:
     """
     _ensure_csv(LOCAL_POWER_FILE, POWER_HEADER)
 
+    # --- merge remote into local to ensure freshest data for all readers ---
+    try:
+        tmp = "_tmp_power.csv"
+        if fetch_from_repo(REPO_POWER_PATH, tmp, prefer_api=True):
+            _ensure_csv(LOCAL_POWER_FILE, POWER_HEADER)
+            _local_df = _load_power_df_from_path(LOCAL_POWER_FILE)
+            _remote_df = _load_power_df_from_path(tmp)
+            _both = pd.concat([_local_df, _remote_df], ignore_index=True)                     .drop_duplicates(subset=POWER_HEADER, keep="last")                     .sort_values("timestamp")
+            _both.to_csv(LOCAL_POWER_FILE, index=False)
+    except Exception as _e:
+        print(f"[merge-warning] {_e}")
+
+
     # 1) načti syrový text
     with open(LOCAL_POWER_FILE, "rb") as f:
         raw = f.read()
@@ -141,65 +154,6 @@ def _load_power_df() -> pd.DataFrame:
     df = df.dropna(subset=["timestamp"]).copy()
     df = df[POWER_HEADER]
     return df
-
-# --- Bezpečné sloučení lokál + remote ---
-
-def _load_power_df_from_path(path: str) -> pd.DataFrame:
-    with open(path, "rb") as f:
-        raw = f.read()
-    text = raw.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
-    lines = [ln for ln in text.split("\n") if ln.strip() != ""]
-    rows: List[List[str]] = []
-    has_header = False
-    if lines:
-        first = re.split(r"[,\t;]", lines[0])
-        has_header = any(tok.strip().lower() == "player" for tok in first)
-    data_lines = lines[1:] if has_header else lines
-    for ln in data_lines:
-        parts = re.split(r"[,\t;]", ln)
-        parts = [p.strip() for p in parts]
-        if len(parts) < 6:
-            parts = parts + [""] * (6 - len(parts))
-        elif len(parts) > 6:
-            parts = parts[:6]
-        rows.append(parts)
-    buf = io.StringIO()
-    buf.write(",".join(POWER_HEADER) + "\n")
-    for r in rows:
-        buf.write(",".join(r) + "\n")
-    buf.seek(0)
-    df = pd.read_csv(buf, sep=",", dtype=str)
-    for c in POWER_HEADER:
-        if c not in df.columns:
-            df[c] = None
-    df["player"] = df["player"].astype(str).str.strip()
-    for c in ["tank","rocket","air","team4"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
-    df = df.dropna(subset=["timestamp"]).copy()
-    df = df[POWER_HEADER]
-    return df
-
-def _sync_merge_with_remote() -> pd.DataFrame:
-    """
-    Sloučí lokální CSV s dočasně staženou remote verzí a vrátí výsledek.
-    - Nepřepíše lokál starší vzdálenou verzí
-    - Odstraní duplicity (plná shoda všech sloupců)
-    - Výsledek uloží zpět do LOCAL_POWER_FILE
-    """
-    _ensure_csv(LOCAL_POWER_FILE, POWER_HEADER)
-    local = _load_power_df()
-    tmp = "_tmp_power.csv"
-    remote_ok = fetch_from_repo(REPO_POWER_PATH, tmp, prefer_api=True)
-    if remote_ok:
-        remote = _load_power_df_from_path(tmp)
-        both = pd.concat([local, remote], ignore_index=True)
-    else:
-        both = local
-    both = both.drop_duplicates(subset=POWER_HEADER, keep="last").sort_values("timestamp")
-    both.to_csv(LOCAL_POWER_FILE, index=False)
-    return both
-
 
 def _plot_series(df: pd.DataFrame, title: str) -> discord.File:
     fig, ax = plt.subplots(figsize=(8, 4.5))
@@ -264,7 +218,7 @@ def _rebuild_players_cache_from_local() -> int:
     """Načte lokální CSV a přestaví PLAYERS_CACHE (nejnovější nahoře). Vrátí počet hráčů."""
     global PLAYERS_CACHE
     try:
-        df = _sync_merge_with_remote()
+        df = _load_power_df()
         if df.empty:
             PLAYERS_CACHE = []
             return 0
@@ -359,7 +313,9 @@ class PowerCommands(commands.Cog):
     @app_commands.autocomplete(player=player_autocomplete)
     async def powerplayer(self, interaction: discord.Interaction, player: str):
         if not await _safe_defer(interaction): return
-        df = _sync_merge_with_remote()
+        fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
+
+        df = _load_power_df()
         df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
         if df_p.empty:
             await interaction.followup.send(f"⚠️ Žádná data pro **{player}**."); return
@@ -386,7 +342,6 @@ class PowerCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     async def powerdebug(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction, ephemeral=True): return
-        _sync_merge_with_remote()
         try:
             ldf = pd.read_csv(LOCAL_POWER_FILE, sep=None, engine="python"); l_rows = len(ldf)
             l_tail = ldf.tail(3).to_string(index=False)
@@ -413,7 +368,7 @@ class PowerCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     async def powertopplayer(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction): return
-        df = _sync_merge_with_remote()
+        df = _load_power_df()
         if df.empty:
             await interaction.followup.send("⚠️ Žádná power data zatím nejsou."); return
         grp = df.groupby("player", as_index=False).agg({"tank":"max","rocket":"max","air":"max"}).fillna(0.0)
@@ -435,7 +390,8 @@ class PowerCommands(commands.Cog):
     ])
     async def powerplayervsplayer(self, interaction: discord.Interaction, player1: str, player2: str, team: app_commands.Choice[str]):
         if not await _safe_defer(interaction): return
-        df = _sync_merge_with_remote()
+        fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
+        df = _load_power_df()
         col = team.value
 
         p1 = df[df["player"].str.lower() == player1.lower()].sort_values("timestamp")
@@ -650,7 +606,8 @@ class StormPickerView(discord.ui.View):
             return
 
         # 1) Připrav data
-        df = _sync_merge_with_remote()
+        fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
+        df = _load_power_df()
         latest = _latest_by_player(df)
         latest["total"] = latest.apply(_total_power_row, axis=1)
 
