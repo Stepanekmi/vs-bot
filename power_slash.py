@@ -1,3 +1,4 @@
+
 # power_slash.py
 # ------------------------------------------------------------
 # Stávající příkazy:
@@ -86,7 +87,7 @@ def _load_power_df() -> pd.DataFrame:
     """
     Robustní načtení CSV:
     - NEkolabuje prázdná pole: zachová dvojité čárky ,, i prázdná team4
-    - rozděluje řádky podle [,	;] a skládá přesně 6 sloupců v pořadí POWER_HEADER
+    - rozděluje řádky podle [,\t;] a skládá přesně 6 sloupců v pořadí POWER_HEADER
     - sjednotí typy a názvy, timestamp parsuje ISO i s T i s mezerou (UTC)
     """
     _ensure_csv(LOCAL_POWER_FILE, POWER_HEADER)
@@ -94,26 +95,22 @@ def _load_power_df() -> pd.DataFrame:
     # 1) načti syrový text
     with open(LOCAL_POWER_FILE, "rb") as f:
         raw = f.read()
-    text = raw.decode("utf-8", errors="ignore").replace("
-", "
-").replace("", "
-")
+    text = raw.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
 
-    lines = [ln for ln in text.split("
-") if ln.strip() != ""]
+    lines = [ln for ln in text.split("\n") if ln.strip() != ""]
     rows: List[List[str]] = []
 
     # 2) zjisti, jestli první řádek je hlavička
     has_header = False
     if lines:
-        first = re.split(r"[,	;]", lines[0])
+        first = re.split(r"[,\t;]", lines[0])
         has_header = any(tok.strip().lower() == "player" for tok in first)
 
     # 3) data řádky (bez hlavičky)
     data_lines = lines[1:] if has_header else lines
 
     for ln in data_lines:
-        parts = re.split(r"[,	;]", ln)  # zachová prázdná pole
+        parts = re.split(r"[,\t;]", ln)  # zachová prázdná pole
         parts = [p.strip() for p in parts]
         if len(parts) < 6:
             parts = parts + [""] * (6 - len(parts))
@@ -123,11 +120,9 @@ def _load_power_df() -> pd.DataFrame:
 
     # 4) poskládej do čistého CSV streamu
     buf = io.StringIO()
-    buf.write(",".join(POWER_HEADER) + "
-")
+    buf.write(",".join(POWER_HEADER) + "\n")
     for r in rows:
-        buf.write(",".join(r) + "
-")
+        buf.write(",".join(r) + "\n")
     buf.seek(0)
 
     # 5) načti pandasem a přetypuj
@@ -147,25 +142,21 @@ def _load_power_df() -> pd.DataFrame:
     df = df[POWER_HEADER]
     return df
 
-# --- NOVÉ HELPERY: bezpečné sloučení lokál + remote (bez přepsání lokálu starší verzí) ---
+# --- Bezpečné sloučení lokál + remote ---
+
 def _load_power_df_from_path(path: str) -> pd.DataFrame:
-    """Stejné jako _load_power_df(), ale načte z dané cesty (bez volání _ensure_csv pro cizí soubor)."""
     with open(path, "rb") as f:
         raw = f.read()
-    text = raw.decode("utf-8", errors="ignore").replace("
-", "
-").replace("", "
-")
-    lines = [ln for ln in text.split("
-") if ln.strip() != ""]
+    text = raw.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [ln for ln in text.split("\n") if ln.strip() != ""]
     rows: List[List[str]] = []
     has_header = False
     if lines:
-        first = re.split(r"[,	;]", lines[0])
+        first = re.split(r"[,\t;]", lines[0])
         has_header = any(tok.strip().lower() == "player" for tok in first)
     data_lines = lines[1:] if has_header else lines
     for ln in data_lines:
-        parts = re.split(r"[,	;]", ln)
+        parts = re.split(r"[,\t;]", ln)
         parts = [p.strip() for p in parts]
         if len(parts) < 6:
             parts = parts + [""] * (6 - len(parts))
@@ -173,11 +164,9 @@ def _load_power_df_from_path(path: str) -> pd.DataFrame:
             parts = parts[:6]
         rows.append(parts)
     buf = io.StringIO()
-    buf.write(",".join(POWER_HEADER) + "
-")
+    buf.write(",".join(POWER_HEADER) + "\n")
     for r in rows:
-        buf.write(",".join(r) + "
-")
+        buf.write(",".join(r) + "\n")
     buf.seek(0)
     df = pd.read_csv(buf, sep=",", dtype=str)
     for c in POWER_HEADER:
@@ -193,10 +182,10 @@ def _load_power_df_from_path(path: str) -> pd.DataFrame:
 
 def _sync_merge_with_remote() -> pd.DataFrame:
     """
-    Sloučí lokální CSV s dočasně staženou remote verzí.
-    - Nezapíše přes lokál starší vzdálenou verzi
-    - Odstraní duplicity řádků (plná shoda všech sloupců)
-    - Výsledek uloží zpět do LOCAL_POWER_FILE a vrátí DataFrame
+    Sloučí lokální CSV s dočasně staženou remote verzí a vrátí výsledek.
+    - Nepřepíše lokál starší vzdálenou verzí
+    - Odstraní duplicity (plná shoda všech sloupců)
+    - Výsledek uloží zpět do LOCAL_POWER_FILE
     """
     _ensure_csv(LOCAL_POWER_FILE, POWER_HEADER)
     local = _load_power_df()
@@ -211,6 +200,7 @@ def _sync_merge_with_remote() -> pd.DataFrame:
     both.to_csv(LOCAL_POWER_FILE, index=False)
     return both
 
+
 def _plot_series(df: pd.DataFrame, title: str) -> discord.File:
     fig, ax = plt.subplots(figsize=(8, 4.5))
     for col in ["tank","rocket","air","team4"]:
@@ -224,14 +214,12 @@ def _plot_series(df: pd.DataFrame, title: str) -> discord.File:
     return discord.File(buf, filename="power.png")
 
 async def _send_long(interaction: discord.Interaction, header: str, lines: List[str]):
-    chunk = (header + "
-") if header else ""
+    chunk = (header + "\n") if header else ""
     for line in lines:
         if len(chunk) + len(line) + 1 > 1900:
             await interaction.followup.send(chunk.rstrip())
             chunk = ""
-        chunk += line + "
-"
+        chunk += line + "\n"
     if chunk.strip():
         await interaction.followup.send(chunk.rstrip())
 
@@ -276,7 +264,7 @@ def _rebuild_players_cache_from_local() -> int:
     """Načte lokální CSV a přestaví PLAYERS_CACHE (nejnovější nahoře). Vrátí počet hráčů."""
     global PLAYERS_CACHE
     try:
-        df = _load_power_df()
+        df = _sync_merge_with_remote()
         if df.empty:
             PLAYERS_CACHE = []
             return 0
@@ -371,9 +359,7 @@ class PowerCommands(commands.Cog):
     @app_commands.autocomplete(player=player_autocomplete)
     async def powerplayer(self, interaction: discord.Interaction, player: str):
         if not await _safe_defer(interaction): return
-        # bezpečný merge lokál + remote (nepřepíše lokál starší verzí)
         df = _sync_merge_with_remote()
-
         df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
         if df_p.empty:
             await interaction.followup.send(f"⚠️ Žádná data pro **{player}**."); return
@@ -390,9 +376,7 @@ class PowerCommands(commands.Cog):
             if col not in df_p.columns or df_p[col].dropna().empty:
                 continue
             seq = _sequence_line(df_p[col].tolist())
-            lines.append(f"**{_icon(col)} {col.upper()}:**
-{seq}
-")
+            lines.append(f"**{_icon(col)} {col.upper()}:**\n{seq}\n")
 
         file = _plot_series(df_p, f"Vývoj {player}")
         await interaction.followup.send(f"**{player}** — {headline}", file=file)
@@ -419,15 +403,8 @@ class PowerCommands(commands.Cog):
         else:
             r_rows = -1; r_tail = "fetch failed"
         msg = (
-            f"**Local**: rows={l_rows}
-```
-{l_tail}
-```
-"
-            f"**Remote**: sha={sha}, size={size}, rows={r_rows}
-```
-{r_tail}
-```"
+            f"**Local**: rows={l_rows}\n```\n{l_tail}\n```\n"
+            f"**Remote**: sha={sha}, size={size}, rows={r_rows}\n```\n{r_tail}\n```"
         )
         await interaction.followup.send(msg, ephemeral=True)
 
@@ -435,7 +412,7 @@ class PowerCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     async def powertopplayer(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction): return
-        df = _sync_merge_with_remote()
+        df = _load_power_df()
         if df.empty:
             await interaction.followup.send("⚠️ Žádná power data zatím nejsou."); return
         grp = df.groupby("player", as_index=False).agg({"tank":"max","rocket":"max","air":"max"}).fillna(0.0)
@@ -486,12 +463,10 @@ class PowerCommands(commands.Cog):
 
         if not math.isnan(diff) and not math.isnan(pct):
             sign = "+" if diff >= 0 else ""
-            msg = (f"{_icon(col)} **{player1}** vs **{player2}** — {col}
-"
+            msg = (f"{_icon(col)} **{player1}** vs **{player2}** — {col}\n"
                    f"{player1}: {last1:.2f}, {player2}: {last2:.2f} → rozdíl = {sign}{diff:.2f} ({pct:+.2f}%)")
         else:
-            msg = f"{_icon(col)} **{player1}** vs **{player2}** — {col}
-Nedostupná data pro porovnání."
+            msg = f"{_icon(col)} **{player1}** vs **{player2}** — {col}\nNedostupná data pro porovnání."
         await interaction.followup.send(msg, file=file)
 
     @app_commands.command(name="storm", description="Vyber hráče (klikáním) a rozděl je do týmů")
@@ -519,8 +494,7 @@ Nedostupná data pro porovnání."
         await interaction.response.defer(ephemeral=True, thinking=True)
         cnt = len(PLAYERS_CACHE)
         sample = ", ".join(PLAYERS_CACHE[:30])
-        await interaction.followup.send(f"Cache hráčů: {cnt}
-Prvních 30: {sample or '(prázdné)'}", ephemeral=True)
+        await interaction.followup.send(f"Cache hráčů: {cnt}\nPrvních 30: {sample or '(prázdné)'}", ephemeral=True)
 
     @app_commands.command(name="powerreloadnames", description="Znovu načti seznam hráčů z lokálního CSV (bez sítě).")
     @app_commands.guilds(GUILD)
@@ -705,13 +679,11 @@ class StormPickerView(discord.ui.View):
 
         # Výstup (text)
         out_lines = []
-        out_lines.append(f"⚔️ Attack: 🛡️ {attackers.iloc[0]['player']}, 🛡️ {attackers.iloc[1]['player']}
-")
+        out_lines.append(f"⚔️ Attack: 🛡️ {attackers.iloc[0]['player']}, 🛡️ {attackers.iloc[1]['player']}\n")
         for i, (cap_name, power, members) in enumerate(teams, start=1):
             out_lines.append(f"👑 Kapitán Team {i}: {cap_name}")
             out_lines.append(f"   🧑‍🤝‍🧑 Hráči: {', '.join(members) if members else '—'}")
-            out_lines.append(f"   🔋 Total power: {power:,.1f}
-")
+            out_lines.append(f"   🔋 Total power: {power:,.1f}\n")
 
         # 2) Edit ephemerální zprávy (zruší komponenty) – žádné mazání
         await interaction.response.edit_message(content="Týmy vygenerovány 👇", view=None)
