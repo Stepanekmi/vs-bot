@@ -268,7 +268,7 @@ class PowerCommands(commands.Cog):
             "rocket": _normalize_number(rocket),
             "air": _normalize_number(air),
             "team4": _normalize_number(team4) if team4 is not None else math.nan,
-            "timestamp": pd.Timestamp.now(tz='UTC').strftime('%Y-%m-%d %H:%M:%S.%f+00:00'),
+            "timestamp": pd.Timestamp.utcnow().isoformat(),
         }
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
         df = df[POWER_HEADER]
@@ -450,7 +450,207 @@ class PowerCommands(commands.Cog):
         else:
             await interaction.followup.send("⚠️ Nepovedlo se načíst lokální CSV – mrkni do logu.", ephemeral=True)
 
+
+    @app_commands.command(name="powererase", description="Smazat záznamy hráče (vše nebo vybrané)")
+    @app_commands.guilds(GUILD)
+    @app_commands.describe(player="Jméno hráče k odstranění")
+    @app_commands.autocomplete(player=player_autocomplete)
+    async def powererase(self, interaction: discord.Interaction, player: str):
+        """Interaktivní mazání: nabídne 'Smazat vše' nebo 'Vybrat záznamy' a poté potvrdí."""
+        if not await _safe_defer(interaction, ephemeral=True): 
+            return
+
+        df = _load_power_df()
+        if df.empty:
+            await interaction.followup.send("⚠️ CSV je prázdné.", ephemeral=True)
+            return
+
+        mask = df["player"].str.casefold() == player.casefold()
+        if not mask.any():
+            await interaction.followup.send(f"⚠️ Hráč `{player}` nebyl nalezen v datech.", ephemeral=True)
+            return
+
+        # Připravíme posledních až 25 záznamů (nejnovější nahoře)
+        df_p = df[mask].sort_values("timestamp", ascending=False).copy()
+        total = len(df_p)
+        df_p = df_p.head(25)  # Select má limit 25 options
+        rows = []
+        for _, r in df_p.iterrows():
+            ts = r["timestamp"]
+            if hasattr(ts, "strftime"):
+                ts_disp = ts.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                ts_disp = str(ts)
+            label = f"{ts_disp} | tank={r['tank']:.2f} rocket={r['rocket']:.2f} air={r['air']:.2f} team4={'' if pd.isna(r['team4']) else f'{r['team4']:.2f}'}"
+            # hodnoty pro přesné ztotožnění (při smazání porovnáme player+timestamp)
+            rows.append({
+                "player": str(r["player"]),
+                "timestamp": r["timestamp"],
+                "label": label
+            })
+
+        view = EraseModeView(owner_id=interaction.user.id, player=player, rows=rows, total_count=total, parent=self)
+        await interaction.followup.send(
+            f"🗑️ Co chceš mazat pro **{player}**?\n"
+            + ("(Zobrazuji posledních 25 záznamů)" if total > 25 else ""),
+            view=view, ephemeral=True
+        )
 # ====== UI View pro /storm ======
+
+# ====== UI View pro /powererase ======
+class EraseModeView(discord.ui.View):
+    """První krok: volba režimu mazání (vše vs. vybrané záznamy)."""
+    def __init__(self, owner_id: int, player: str, rows: list, total_count: int, parent: PowerCommands, timeout: float = 300):
+        super().__init__(timeout=timeout)
+        self.owner_id = owner_id
+        self.player = player
+        self.rows = rows  # list of dicts: player, timestamp, label
+        self.total_count = total_count
+        self.parent = parent
+
+    async def interaction_guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="🗑️ Smazat vše", style=discord.ButtonStyle.danger, custom_id="erase_all")
+    async def erase_all(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not await self.interaction_guard(interaction): return
+        # Potvrzovací view pro smazání všeho
+        view = EraseAllConfirmView(self.owner_id, self.player, self.parent)
+        await interaction.response.edit_message(content=f"⚠️ Opravdu smazat **všechny** záznamy hráče **{self.player}**?", view=view)
+
+    @discord.ui.button(label="📝 Vybrat záznamy", style=discord.ButtonStyle.primary, custom_id="erase_pick")
+    async def erase_pick(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not await self.interaction_guard(interaction): return
+        view = EraseRecordPickerView(self.owner_id, self.player, self.rows, self.parent, total_count=self.total_count)
+        await interaction.response.edit_message(content=f"Vyber záznamy hráče **{self.player}** k odstranění:", view=view)
+
+
+class EraseAllConfirmView(discord.ui.View):
+    def __init__(self, owner_id: int, player: str, parent: PowerCommands, timeout: float = 300):
+        super().__init__(timeout=timeout)
+        self.owner_id = owner_id
+        self.player = player
+        self.parent = parent
+
+    async def interaction_guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="✅ Potvrdit smazání všeho", style=discord.ButtonStyle.danger, custom_id="erase_all_confirm")
+    async def confirm(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not await self.interaction_guard(interaction): return
+
+        df = _load_power_df()
+        before = len(df)
+        mask = df["player"].str.casefold() == self.player.casefold()
+        count = int(mask.sum())
+        if count == 0:
+            await interaction.response.edit_message(content=f"ℹ️ Hráč **{self.player}** už nemá žádné záznamy.", view=None)
+            self.stop(); return
+
+        df2 = df[~mask].copy()
+        df2 = df2[POWER_HEADER]
+        df2.to_csv(LOCAL_POWER_FILE, index=False)
+        sha = save_to_github(LOCAL_POWER_FILE, REPO_POWER_PATH, f"powererase_all: {self.player} ({count} rows)")
+        fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
+        _rebuild_players_cache_from_local()
+
+        await interaction.response.edit_message(content=f"🧹 Smazáno **{count}** záznamů hráče **{self.player}**.\nCommit: `{sha}`", view=None)
+        self.stop()
+
+    @discord.ui.button(label="Zrušit", style=discord.ButtonStyle.secondary, custom_id="erase_all_cancel")
+    async def cancel(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not await self.interaction_guard(interaction): return
+        await interaction.response.edit_message(content="Zrušeno.", view=None)
+        self.stop()
+
+
+class EraseRecordPickerView(discord.ui.View):
+    """Výběr konkrétních záznamů (posledních až 25) a potvrzení smazání."""
+    def __init__(self, owner_id: int, player: str, rows: list, parent: PowerCommands, total_count: int, timeout: float = 300):
+        super().__init__(timeout=timeout)
+        self.owner_id = owner_id
+        self.player = player
+        self.parent = parent
+        self.rows = rows  # list of dicts with 'label', 'timestamp', 'player'
+        self.total_count = total_count
+        self.selected_idx = set()
+        self._build_select()
+
+    def _build_select(self):
+        # Remove old select if exists
+        for child in list(self.children):
+            if isinstance(child, discord.ui.Select) and child.custom_id == "erase_rows_select":
+                self.remove_item(child)
+
+        options = []
+        for i, r in enumerate(self.rows):
+            options.append(discord.SelectOption(label=r["label"][:100], value=str(i)))
+        select = discord.ui.Select(placeholder="Vyber záznamy k odstranění", min_values=1, max_values=min(25, len(options)), options=options, custom_id="erase_rows_select")
+
+        async def on_select(interaction: discord.Interaction):
+            if interaction.user.id != self.owner_id:
+                await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+                return
+            self.selected_idx = set(int(v) for v in select.values)
+            await interaction.response.defer()  # nic needitujeme
+
+        select.callback = on_select  # type: ignore
+        self.add_item(select)
+
+    async def interaction_guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="🗑️ Smazat vybrané", style=discord.ButtonStyle.danger, custom_id="erase_rows_confirm")
+    async def erase_selected(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not await self.interaction_guard(interaction): return
+        if not self.selected_idx:
+            await interaction.response.send_message("Vyber minimálně jeden záznam.", ephemeral=True)
+            return
+
+        # připrav seznam timestampů vybraných záznamů
+        sel_ts = []
+        for i in sorted(self.selected_idx):
+            try:
+                sel_ts.append(self.rows[i]["timestamp"])
+            except Exception:
+                pass
+
+        df = _load_power_df()
+        before = len(df)
+        # porovnáváme hráč+timestamp (timestamp je v df jako datetime64[ns, UTC])
+        mask_player = df["player"].str.casefold() == self.player.casefold()
+        mask_ts = df["timestamp"].isin(sel_ts)
+        to_delete = (mask_player & mask_ts)
+        count = int(to_delete.sum())
+        if count == 0:
+            await interaction.response.edit_message(content="ℹ️ Vybrané řádky už nejsou v CSV.", view=None)
+            self.stop(); return
+
+        df2 = df[~to_delete].copy()
+        df2 = df2[POWER_HEADER]
+        df2.to_csv(LOCAL_POWER_FILE, index=False)
+        sha = save_to_github(LOCAL_POWER_FILE, REPO_POWER_PATH, f"powererase_rows: {self.player} ({count} rows)")
+        fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
+        _rebuild_players_cache_from_local()
+
+        more_note = " (zobrazeno bylo jen posledních 25)" if self.total_count > 25 else ""
+        await interaction.response.edit_message(content=f"🧹 Smazáno **{count}** záznamů hráče **{self.player}**{more_note}.\nCommit: `{sha}`", view=None)
+        self.stop()
+
+    @discord.ui.button(label="Zrušit", style=discord.ButtonStyle.secondary, custom_id="erase_rows_cancel")
+    async def cancel(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not await self.interaction_guard(interaction): return
+        await interaction.response.edit_message(content="Zrušeno.", view=None)
+        self.stop()
 class StormPickerView(discord.ui.View):
     """Stránkovaný výběr hráčů (Select má limit 25 položek). Po 'Hotovo' vybereš počet týmů a bot vygeneruje rozdělení."""
     PAGE_SIZE = 25
