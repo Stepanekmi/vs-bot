@@ -5,8 +5,10 @@
 # Přidává:
 #   /powerplayervsplayer (autocomplete hráčů + graf jen pro 1 tým)
 #   /storm (UI výběr hráčů se stránkováním + rozdělení do týmů)
-# OPRAVA: u /storm se už nesnažíme mazat ephemeral zprávu (404), ale ji editujeme.
-# OPRAVA: načítání CSV je robustní – normalizace tab/; na čárky, pevné pořadí sloupců.
+# OPRAVY:
+#   - /storm ne-maže ephemeral zprávu (404), jen ji edituje.
+#   - Načítání CSV robustní (TAB/; -> ,), pevné pořadí sloupců.
+#   - Autocomplete NEVOLÁ síť – čte jen lokální CSV + používá cache.
 # ------------------------------------------------------------
 
 import os
@@ -32,6 +34,9 @@ REPO_POWER_PATH = "data/power_data.csv"   # cesta v repo (vs-data-store)
 LOCAL_POWER_FILE = "power_data.csv"       # lokální pracovní soubor
 POWER_HEADER = ["player", "tank", "rocket", "air", "team4", "timestamp"]  # pevné pořadí
 
+# cache pro autocomplete (aby fungoval i když CSV zrovna nejde přečíst)
+PLAYERS_CACHE: List[str] = []
+
 # ====== HELPERY ======
 async def _safe_defer(interaction: discord.Interaction, ephemeral: bool = False) -> bool:
     try:
@@ -53,7 +58,6 @@ def _ensure_csv(path: str, header: List[str]) -> None:
             if os.path.getsize(path) == 0:
                 need = True
             else:
-                # jen ověřit čitelnost
                 _ = pd.read_csv(path, sep=None, engine="python")
         except Exception:
             need = True
@@ -85,22 +89,15 @@ def _load_power_df() -> pd.DataFrame:
     """
     _ensure_csv(LOCAL_POWER_FILE, POWER_HEADER)
 
-    # --- NORMALIZACE ODDĚLOVAČŮ ---
     with open(LOCAL_POWER_FILE, "rb") as f:
         raw = f.read()
     text = raw.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
 
-    # TAB a ; -> čárka
     text = text.replace("\t", ",").replace(";", ",")
-
-    # Sjednotit vícenásobné čárky typu ", ,,,," na jednu čárku mezi hodnotami,
-    # ale zachovat prázdné hodnoty (,,). Toto řeší hlavně TAB/; mix.
     text = re.sub(r",\s*,+", ",", text)
 
-    # --- ČTENÍ S PEVNÝM SEP="," ---
     df = pd.read_csv(io.StringIO(text), sep=",")
 
-    # --- NORMALIZACE SCHÉMATU A TYPŮ ---
     if "date" in df.columns and "timestamp" not in df.columns:
         df.rename(columns={"date": "timestamp"}, inplace=True)
     if "time" in df.columns and "timestamp" not in df.columns:
@@ -114,7 +111,6 @@ def _load_power_df() -> pd.DataFrame:
     for c in ["tank","rocket","air","team4"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    # zvládne „2025-08-19T…“ i „2025-07-13 …“
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
 
     df = df.dropna(subset=["timestamp"]).copy()
@@ -181,23 +177,38 @@ def _latest_by_player(df: pd.DataFrame) -> pd.DataFrame:
 
 # ====== AUTOCOMPLETE ======
 def _all_players() -> List[str]:
-    try:
-        # prefer API fetch – čerstvá data
-        fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
-    except Exception:
-        pass
+    """Rychlý seznam hráčů POUZE z lokálního CSV (bez sítě). Seřazený podle posledního záznamu (nejnovější nahoře).
+    Fallback na cache, aby autocomplete vždy něco vrátil.
+    """
+    global PLAYERS_CACHE
     try:
         df = _load_power_df()
-        names = sorted(df["player"].dropna().astype(str).str.strip().unique().tolist(), key=str.lower)
-        return names
-    except Exception:
-        return []
+        if df.empty:
+            return PLAYERS_CACHE
+        latest = df.sort_values("timestamp").groupby("player", as_index=False).tail(1)
+        # seřadit podle timestamp, nejnovější první
+        latest = latest.sort_values("timestamp", ascending=False)
+        names_sorted = latest["player"].astype(str).str.strip().tolist()
+        # deduplikace zachovávající pořadí
+        seen = set()
+        ordered_unique = [n for n in names_sorted if not (n in seen or seen.add(n))]
+        PLAYERS_CACHE = ordered_unique
+        return ordered_unique
+    except Exception as e:
+        print(f"[autocomplete] load failed: {e}")
+        return PLAYERS_CACHE or []
 
 async def player_autocomplete(_: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-    names = _all_players()
-    if current:
-        names = [n for n in names if n.lower().startswith(current.lower())]
-    return [app_commands.Choice(name=n, value=n) for n in names[:25]]  # Discord limit 25
+    try:
+        names = _all_players()
+        if current:
+            q = current.casefold()
+            names = [n for n in names if q in n.casefold()]  # podřetězcové vyhledávání
+        return [app_commands.Choice(name=n, value=n) for n in names[:25]]
+    except Exception:
+        fallback = (PLAYERS_CACHE[:25] if not current else
+                    [n for n in PLAYERS_CACHE if current.casefold() in n.casefold()][:25])
+        return [app_commands.Choice(name=n, value=n) for n in fallback]
 
 # ====== COG ======
 class PowerCommands(commands.Cog):
@@ -211,7 +222,7 @@ class PowerCommands(commands.Cog):
     async def powerenter(self, interaction: discord.Interaction, player: str, tank: str, rocket: str, air: str, team4: Optional[str] = None):
         if not await _safe_defer(interaction, ephemeral=True): return
 
-        # 1) merge-up z GitHubu (API)
+        # 1) merge-up z GitHubu (API) – mimo autocomplete nevadí síť
         ok = fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
         if not ok: _ensure_csv(LOCAL_POWER_FILE, POWER_HEADER)
 
@@ -226,7 +237,7 @@ class PowerCommands(commands.Cog):
             "timestamp": pd.Timestamp.utcnow().isoformat(),
         }
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-        df = df[POWER_HEADER]  # pevné pořadí
+        df = df[POWER_HEADER]
         df.to_csv(LOCAL_POWER_FILE, index=False)
 
         # 3) commit + ověření + stáhnout zpět
@@ -259,7 +270,6 @@ class PowerCommands(commands.Cog):
         if df_p.empty:
             await interaction.followup.send(f"⚠️ Žádná data pro **{player}**."); return
 
-        # headline – změna vs předchozí odlišná hodnota
         parts = []
         for col in ["tank","rocket","air","team4"]:
             if col not in df_p.columns: continue
@@ -267,7 +277,6 @@ class PowerCommands(commands.Cog):
             parts.append(f"{label} {d}" if d else f"{label} Δ ?")
         headline = " • ".join(parts)
 
-        # sekvence
         lines = []
         for col in ["tank","rocket","air"]:
             if col not in df_p.columns or df_p[col].dropna().empty: 
@@ -283,13 +292,11 @@ class PowerCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     async def powerdebug(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction, ephemeral=True): return
-        # lokál
         try:
             ldf = pd.read_csv(LOCAL_POWER_FILE, sep=None, engine="python"); l_rows = len(ldf)
             l_tail = ldf.tail(3).to_string(index=False)
         except Exception as e:
             l_rows = -1; l_tail = f"read error: {e}"
-        # remote
         sha, size = get_remote_meta(REPO_POWER_PATH)
         tmp = "_tmp_power.csv"
         fetched = fetch_from_repo(REPO_POWER_PATH, tmp, prefer_api=True)
@@ -347,7 +354,6 @@ class PowerCommands(commands.Cog):
         diff = last1 - last2 if not (math.isnan(last1) or math.isnan(last2)) else float("nan")
         pct = (diff / last2 * 100.0) if (not math.isnan(diff) and last2 != 0) else float("nan")
 
-        # graf pouze pro vybraný team (col)
         fig, ax = plt.subplots(figsize=(8, 4.5))
         ax.plot(p1["timestamp"], p1[col], marker="o", label=player1)
         ax.plot(p2["timestamp"], p2[col], marker="o", label=player2)
@@ -390,7 +396,6 @@ class PowerCommands(commands.Cog):
 
 # ====== UI View pro /storm ======
 class StormPickerView(discord.ui.View):
-    """Stránkovaný výběr hráčů (Select má limit 25 položek). Po 'Hotovo' vybereš počet týmů a bot vygeneruje rozdělení."""
     PAGE_SIZE = 25
 
     def __init__(self, owner_id: int, all_names: List[str], parent: PowerCommands, timeout: Optional[float] = 300):
@@ -399,7 +404,7 @@ class StormPickerView(discord.ui.View):
         self.all_names = all_names
         self.parent = parent
         self.page = 0
-        self.selected = set()  # vybraní hráči napříč stránkami
+        self.selected = set()
         self.team_count: Optional[int] = None
         self._rebuild_select()
 
@@ -409,7 +414,6 @@ class StormPickerView(discord.ui.View):
         return self.all_names[start:end]
 
     def _rebuild_select(self):
-        # odstranit starý Select (hráči) pokud existuje
         for child in list(self.children):
             if isinstance(child, discord.ui.Select) and child.custom_id and child.custom_id.startswith("players_page_"):
                 self.remove_item(child)
@@ -439,8 +443,6 @@ class StormPickerView(discord.ui.View):
 
         select.callback = on_select  # type: ignore
         self.add_item(select)
-
-        # pokud už je nastaven počet týmů, zobrazí se i select pro týmy
         self._rebuild_team_count_if_needed()
 
     def _rebuild_team_count_if_needed(self):
@@ -468,7 +470,6 @@ class StormPickerView(discord.ui.View):
         team_select.callback = on_team_select  # type: ignore
         self.add_item(team_select)
 
-    # ----- Buttons -----
     @discord.ui.button(label="⬅️ Předchozí", style=discord.ButtonStyle.secondary)
     async def prev_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
@@ -510,8 +511,7 @@ class StormPickerView(discord.ui.View):
         if len(self.selected) < 2:
             await interaction.response.send_message("Vyber aspoň 2 hráče.", ephemeral=True)
             return
-        # přepneme do režimu výběru počtu týmů
-        self.team_count = 2  # výchozí
+        self.team_count = 2
         self._rebuild_select()
         await interaction.response.edit_message(
             content=f"Vybráno hráčů: {len(self.selected)} • Počet týmů: {self.team_count} (upraveno)",
@@ -530,7 +530,6 @@ class StormPickerView(discord.ui.View):
             await interaction.response.send_message("Vyber nejprve počet týmů (2–6).", ephemeral=True)
             return
 
-        # 1) Připrav data
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
         df = _load_power_df()
         latest = _latest_by_player(df)
@@ -549,18 +548,15 @@ class StormPickerView(discord.ui.View):
         captains = rest.iloc[:k].copy()
         rest = rest.iloc[k:].copy()
 
-        # inicializace týmů (kapitán + jeho síla)
         teams: List[Tuple[str, float, List[str]]] = []
         for _, cap in captains.iterrows():
-            teams.append([str(cap["player"]), float(cap["total"]), []])  # name, power, members
+            teams.append([str(cap["player"]), float(cap["total"]), []])
 
-        # greedy rozdělení zbytku: vždy přidej hráče do týmu s nejnižší silou
         for _, row in rest.iterrows():
             idx = min(range(len(teams)), key=lambda i: teams[i][1])
             teams[idx][1] += float(row["total"])
             teams[idx][2].append(str(row["player"]))
 
-        # Výstup (text)
         out_lines = []
         out_lines.append(f"⚔️ Attack: 🛡️ {attackers.iloc[0]['player']}, 🛡️ {attackers.iloc[1]['player']}\n")
         for i, (cap_name, power, members) in enumerate(teams, start=1):
@@ -568,13 +564,8 @@ class StormPickerView(discord.ui.View):
             out_lines.append(f"   🧑‍🤝‍🧑 Hráči: {', '.join(members) if members else '—'}")
             out_lines.append(f"   🔋 Total power: {power:,.1f}\n")
 
-        # 2) Edit ephemerální zprávy (zruší komponenty) – žádné mazání
         await interaction.response.edit_message(content="Týmy vygenerovány 👇", view=None)
-
-        # 3) Pošleme veřejně do kanálu
         await interaction.channel.send("\n".join(out_lines))
-
-        # 4) ukončíme view
         self.stop()
 
 # ====== REGISTRACE COGU ======
