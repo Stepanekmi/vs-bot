@@ -27,6 +27,7 @@ from discord.ext import commands
 
 import pandas as pd
 import matplotlib.pyplot as plt
+import unicodedata
 
 from github_sync import fetch_from_repo, save_to_github, get_remote_meta
 
@@ -189,6 +190,13 @@ def _sequence_line(values: List[float]) -> str:
         total = (nums[-1] - nums[0]) / nums[0] * 100.0
         parts.append(f" | Total: {('+' if total>=0 else '')}{total:.2f}%")
     return " ".join(parts)
+# --- Name normalization to avoid invisible chars/BOM/case/whitespace mismatches ---
+ZERO_WIDTH = "".join(["\u200B","\u200C","\u200D","\uFEFF"])
+def _norm_name(s: str) -> str:
+    s = unicodedata.normalize("NFKC", str(s))
+    s = s.translate({ord(ch): None for ch in ZERO_WIDTH}).strip().casefold()
+    return s
+
 
 def _icon(name: str) -> str:
     return {"tank":"🛡️", "rocket":"🚀", "air":"✈️"}.get(name, name)
@@ -299,11 +307,16 @@ class PowerCommands(commands.Cog):
     @app_commands.describe(player="Jméno hráče")
     @app_commands.autocomplete(player=player_autocomplete)
     async def powerplayer(self, interaction: discord.Interaction, player: str):
+        player = _norm_name(player.strip())
         if not await _safe_defer(interaction): return
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
 
         df = _load_power_df()
-        df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
+        df["_player_norm"] = df["player"].apply(_norm_name)
+        df_p = df[df["_player_norm"] == player].copy()
+        # ignore obviously invalid zero rows
+        df_p = df_p[~((df_p["tank"]==0) & (df_p["rocket"]==0) & (df_p["air"]==0))]
+        df_p = df_p.sort_values("timestamp")
         if df_p.empty:
             await interaction.followup.send(f"⚠️ Žádná data pro **{player}**."); return
 
@@ -379,10 +392,14 @@ class PowerCommands(commands.Cog):
         if not await _safe_defer(interaction): return
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
         df = _load_power_df()
+        df["_player_norm"] = df["player"].apply(_norm_name)
         col = team.value
+        player1 = _norm_name(player1.strip()); player2 = _norm_name(player2.strip())
 
-        p1 = df[df["player"].str.lower() == player1.lower()].sort_values("timestamp")
-        p2 = df[df["player"].str.lower() == player2.lower()].sort_values("timestamp")
+        p1 = df[df["_player_norm"] == player1].copy()
+        p1 = p1[~((p1["tank"]==0) & (p1["rocket"]==0) & (p1["air"]==0))].sort_values("timestamp")
+        p2 = df[df["_player_norm"] == player2].copy()
+        p2 = p2[~((p2["tank"]==0) & (p2["rocket"]==0) & (p2["air"]==0))].sort_values("timestamp")
         if p1.empty or p2.empty:
             await interaction.followup.send("⚠️ Hráč nenalezen v CSV."); return
 
