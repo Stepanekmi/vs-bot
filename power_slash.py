@@ -190,12 +190,12 @@ def _sequence_line(values: List[float]) -> str:
         total = (nums[-1] - nums[0]) / nums[0] * 100.0
         parts.append(f" | Total: {('+' if total>=0 else '')}{total:.2f}%")
     return " ".join(parts)
+
 # --- Name normalization to avoid invisible chars/BOM/case/whitespace mismatches ---
-ZERO_WIDTH = "".join(["\u200B","\u200C","\u200D","\uFEFF"])
+ZERO_WIDTH = "".join(["\u200B","\u200C","\u200D","\uFEFF"])  # ZWSP, ZWNJ, ZWJ, BOM
 def _norm_name(s: str) -> str:
     s = unicodedata.normalize("NFKC", str(s))
-    s = s.translate({ord(ch): None for ch in ZERO_WIDTH}).strip().casefold()
-    return s
+    return s.translate({ord(ch): None for ch in ZERO_WIDTH}).strip().casefold()
 
 
 def _icon(name: str) -> str:
@@ -313,10 +313,9 @@ class PowerCommands(commands.Cog):
 
         df = _load_power_df()
         df["_player_norm"] = df["player"].apply(_norm_name)
-        df_p = df[df["_player_norm"] == player].copy()
-        # ignore obviously invalid zero rows
-        df_p = df_p[~((df_p["tank"]==0) & (df_p["rocket"]==0) & (df_p["air"]==0))]
-        df_p = df_p.sort_values("timestamp")
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', utc=True)
+        df = df.dropna(subset=['timestamp'])
+        df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
         if df_p.empty:
             await interaction.followup.send(f"⚠️ Žádná data pro **{player}**."); return
 
@@ -393,6 +392,8 @@ class PowerCommands(commands.Cog):
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
         df = _load_power_df()
         df["_player_norm"] = df["player"].apply(_norm_name)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', utc=True)
+        df = df.dropna(subset=['timestamp'])
         col = team.value
         player1 = _norm_name(player1.strip()); player2 = _norm_name(player2.strip())
 
