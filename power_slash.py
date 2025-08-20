@@ -327,7 +327,7 @@ class PowerCommands(commands.Cog):
 
     @app_commands.command(name="powerdebug", description="Detailní diagnostika načítání/syncu")
     @app_commands.guilds(GUILD)
-    async def powerdebug(self, interaction):
+    async def powerdebug(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction, ephemeral=True): return
 
         report = []
@@ -350,10 +350,10 @@ class PowerCommands(commands.Cog):
             ldf_raw = None
 
         # 2) Čtení REMOTE (fetch -> tmp)
-            sha, size = get_remote_meta(REPO_POWER_PATH)
-            tmp = "_tmp_power.csv"
-            fetched = fetch_from_repo(REPO_POWER_PATH, tmp, prefer_api=True)
-            report.append(f"🌐 Remote: sha={sha}, size={size}, fetched={bool(fetched)}")
+        sha, size = get_remote_meta(REPO_POWER_PATH)
+        tmp = "_tmp_power.csv"
+        fetched = fetch_from_repo(REPO_POWER_PATH, tmp, prefer_api=True)
+        report.append(f"🌐 Remote: sha={sha}, size={size}, fetched={bool(fetched)}")
 
         try:
             rdf_raw = pd.read_csv(tmp, sep=None, engine="python") if fetched else None
@@ -418,7 +418,7 @@ class PowerCommands(commands.Cog):
 
 @app_commands.command(name="powerdebug", description="Detailní diagnostika načítání/syncu")
 @app_commands.guilds(GUILD)
-async def powerdebug(self, interaction):
+async def powerdebug(self, interaction: discord.Interaction):
     if not await _safe_defer(interaction, ephemeral=True): return
 
     report = []
