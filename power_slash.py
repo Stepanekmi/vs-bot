@@ -250,9 +250,9 @@ class PowerCommands(commands.Cog):
         _rebuild_players_cache_from_local()
 
     # ---------- EXISTUJÍCÍ PŘÍKAZY ----------
-    @app_commands.command(name="powerenter", description="Zapiš hodnoty power pro hráče")
+    @app_commands.command(name="powerenter", description="Add a new record and push to GitHub")
     @app_commands.guilds(GUILD)
-    @app_commands.describe(player="Jméno hráče", tank="Síla tanků", rocket="Síla raket", air="Síla letectva", team4="Síla 4. týmu (volitelné)")
+    @app_commands.describe(player="Player name", tank="Síla tanků", rocket="Síla raket", air="Síla letectva", team4="Síla 4. týmu (volitelné)")
     async def powerenter(self, interaction: discord.Interaction, player: str, tank: str, rocket: str, air: str, team4: Optional[str] = None):
         if not await _safe_defer(interaction, ephemeral=True): return
 
@@ -282,21 +282,21 @@ class PowerCommands(commands.Cog):
 
         if sha_after:
             await interaction.followup.send(
-                f"✅ Zapsáno a commitnuto: before={sha_before} -> after={sha_after} (verify={sha_verify}, size={size_verify})",
+                f"✅ Written and committed: before={sha_before} -> after={sha_after} (verify={sha_verify}, size={size_verify})",
                 ephemeral=True
             )
         else:
             await interaction.followup.send(
-                "⚠️ Zapsáno lokálně, commit na GitHub **neproběhl** – zkontroluj GH_TOKEN/OWNER/REPO/BRANCH a logy.",
+                "⚠️ Written locally, GitHub commit **failed** – check GH_TOKEN/OWNER/REPO/BRANCH and logs.",
                 ephemeral=True
             )
 
         # po úspěšném zápisu aktualizuj cache (ať autocomplete hned zná nová jména)
         _rebuild_players_cache_from_local()
 
-    @app_commands.command(name="powerplayer", description="Vývoj power pro hráče (graf + sekvence změn po týmech)")
+    @app_commands.command(name="powerplayer", description="Show player progression by team")
     @app_commands.guilds(GUILD)
-    @app_commands.describe(player="Jméno hráče")
+    @app_commands.describe(player="Player name")
     @app_commands.autocomplete(player=player_autocomplete)
     async def powerplayer(self, interaction: discord.Interaction, player: str):
         if not await _safe_defer(interaction): return
@@ -305,7 +305,7 @@ class PowerCommands(commands.Cog):
         df = _load_power_df()
         df_p = df[df["player"].str.lower() == player.lower()].sort_values("timestamp")
         if df_p.empty:
-            await interaction.followup.send(f"⚠️ Žádná data pro **{player}**."); return
+            await interaction.followup.send(f"⚠️ No data for **{player}**."); return
 
         parts = []
         for col in ["tank","rocket","air","team4"]:
@@ -325,7 +325,7 @@ class PowerCommands(commands.Cog):
         await interaction.followup.send(f"**{player}** — {headline}", file=file)
         await _send_long(interaction, "", lines)
 
-    @app_commands.command(name="powerdebug", description="Porovná lokální a vzdálené CSV (rychlá diagnostika)")
+    @app_commands.command(name="powerdebug", description="Diagnostics for CSV load/sync")
     @app_commands.guilds(GUILD)
     async def powerdebug(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction, ephemeral=True): return
@@ -351,24 +351,24 @@ class PowerCommands(commands.Cog):
         )
         await interaction.followup.send(msg, ephemeral=True)
 
-    @app_commands.command(name="powertopplayer", description="Všichni hráči podle součtu (tank+rocket+air)")
+    @app_commands.command(name="powertopplayer", description="Show leaderboard from latest entries per player")
     @app_commands.guilds(GUILD)
     async def powertopplayer(self, interaction: discord.Interaction):
         if not await _safe_defer(interaction): return
         df = _load_power_df()
         if df.empty:
-            await interaction.followup.send("⚠️ Žádná power data zatím nejsou."); return
+            await interaction.followup.send("⚠️ No power data yet."); return
         grp = df.groupby("player", as_index=False).agg({"tank":"max","rocket":"max","air":"max"}).fillna(0.0)
         grp["sum3"] = grp["tank"] + grp["rocket"] + grp["air"]
         grp = grp.sort_values("sum3", ascending=False).reset_index(drop=True)
         lines = [f"{i+1}. {row.player}: total={row.sum3:,.1f} (tank={row.tank:,.1f}, rocket={row.rocket:,.1f}, air={row.air:,.1f})"
                  for i, row in grp.iterrows()]
-        await _send_long(interaction, "**TOP hráči (všichni, součet 3)**", lines)
+        await _send_long(interaction, "**TOP players (all, sum of 3)**", lines)
 
     # ---------- NOVÉ PŘÍKAZY ----------
-    @app_commands.command(name="powerplayervsplayer", description="Porovná dva hráče v rámci zvoleného týmu (tank/rocket/air)")
+    @app_commands.command(name="powerplayervsplayer", description="Compare two players in a chosen team")
     @app_commands.guilds(GUILD)
-    @app_commands.describe(player1="První hráč", player2="Druhý hráč", team="Vyber: tank/rocket/air")
+    @app_commands.describe(player1="První hráč", player2="Second player", team="Vyber: tank/rocket/air")
     @app_commands.autocomplete(player1=player_autocomplete, player2=player_autocomplete)
     @app_commands.choices(team=[
         app_commands.Choice(name="tank", value="tank"),
@@ -384,7 +384,7 @@ class PowerCommands(commands.Cog):
         p1 = df[df["player"].str.lower() == player1.lower()].sort_values("timestamp")
         p2 = df[df["player"].str.lower() == player2.lower()].sort_values("timestamp")
         if p1.empty or p2.empty:
-            await interaction.followup.send("⚠️ Hráč nenalezen v CSV."); return
+            await interaction.followup.send("⚠️ Player not found in CSV."); return
 
         last1 = float(p1[col].dropna().iloc[-1]) if p1[col].dropna().size else float("nan")
         last2 = float(p2[col].dropna().iloc[-1]) if p2[col].dropna().size else float("nan")
@@ -408,7 +408,7 @@ class PowerCommands(commands.Cog):
         if not math.isnan(diff) and not math.isnan(pct):
             sign = "+" if diff >= 0 else ""
             msg = (f"{_icon(col)} **{player1}** vs **{player2}** — {col}\n"
-                   f"{player1}: {last1:.2f}, {player2}: {last2:.2f} → rozdíl = {sign}{diff:.2f} ({pct:+.2f}%)")
+                   f"{player1}: {last1:.2f}, {player2}: {last2:.2f} → difference = {sign}{diff:.2f} ({pct:+.2f}%)")
         else:
             msg = f"{_icon(col)} **{player1}** vs **{player2}** — {col}\nNedostupná data pro porovnání."
         await interaction.followup.send(msg, file=file)
@@ -420,25 +420,25 @@ class PowerCommands(commands.Cog):
 
         names = _all_players()
         if not names:
-            await interaction.followup.send("⚠️ Nenašli jsme žádné hráče v CSV.", ephemeral=True)
+            await interaction.followup.send("⚠️ No players found in CSV.", ephemeral=True)
             return
 
         view = StormPickerView(interaction.user.id, names, parent=self)
         await interaction.followup.send(
             "Vyber hráče do STORM (můžeš stránkovat a přidávat). "
-            "Až budeš hotov, klikni **✅ Hotovo**, vyber počet týmů a pak **🛡️ Rozdělit týmy**.",
+            "When ready, click **✅ Done**, choose number of teams and then **🛡️ Split teams**.",
             view=view,
             ephemeral=True
         )
 
     # ---------- Diagnostika hráčů / cache ----------
-    @app_commands.command(name="powernames", description="Diagnostika: kolik hráčů je v cache a kdo to je (prvních 30).")
+    @app_commands.command(name="powernames", description="Diagnostics: how many players are in cache and who they are (first 30).")
     @app_commands.guilds(GUILD)
     async def powernames(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         cnt = len(PLAYERS_CACHE)
         sample = ", ".join(PLAYERS_CACHE[:30])
-        await interaction.followup.send(f"Cache hráčů: {cnt}\nPrvních 30: {sample or '(prázdné)'}", ephemeral=True)
+        await interaction.followup.send(f"Players cache: {cnt}\nFirst 30: {sample or '(empty)'}", ephemeral=True)
 
     @app_commands.command(name="powerreloadnames", description="Znovu načti seznam hráčů z lokálního CSV (bez sítě).")
     @app_commands.guilds(GUILD)
@@ -446,28 +446,28 @@ class PowerCommands(commands.Cog):
         await interaction.response.defer(ephemeral=True, thinking=True)
         n = _rebuild_players_cache_from_local()
         if n >= 0:
-            await interaction.followup.send(f"✅ Cache přestavěna z lokálního CSV. Počet hráčů: {n}", ephemeral=True)
+            await interaction.followup.send(f"✅ Cache rebuilt from local CSV. Players: {n}", ephemeral=True)
         else:
-            await interaction.followup.send("⚠️ Nepovedlo se načíst lokální CSV – mrkni do logu.", ephemeral=True)
+            await interaction.followup.send("⚠️ Failed to load local CSV – check logs.", ephemeral=True)
 
 
-    @app_commands.command(name="powererase", description="Smazat záznamy hráče (vše nebo vybrané)")
+    @app_commands.command(name="powererase", description="Delete player records (all or selected)")
     @app_commands.guilds(GUILD)
-    @app_commands.describe(player="Jméno hráče k odstranění")
+    @app_commands.describe(player="Player name to delete")
     @app_commands.autocomplete(player=player_autocomplete)
     async def powererase(self, interaction: discord.Interaction, player: str):
-        """Interaktivní mazání: nabídne 'Smazat vše' nebo 'Vybrat záznamy' a poté potvrdí."""
+        """Interactive delete: choose "Delete all" or "Pick records", then confirm."""
         if not await _safe_defer(interaction, ephemeral=True): 
             return
 
         df = _load_power_df()
         if df.empty:
-            await interaction.followup.send("⚠️ CSV je prázdné.", ephemeral=True)
+            await interaction.followup.send("⚠️ CSV is empty.", ephemeral=True)
             return
 
         mask = df["player"].str.casefold() == player.casefold()
         if not mask.any():
-            await interaction.followup.send(f"⚠️ Hráč `{player}` nebyl nalezen v datech.", ephemeral=True)
+            await interaction.followup.send(f"⚠️ Player `{player}` was not found in data.", ephemeral=True)
             return
 
         # Připravíme posledních až 25 záznamů (nejnovější nahoře)
@@ -491,10 +491,28 @@ class PowerCommands(commands.Cog):
 
         view = EraseModeView(owner_id=interaction.user.id, player=player, rows=rows, total_count=total, parent=self)
         await interaction.followup.send(
-            f"🗑️ Co chceš mazat pro **{player}**?\n"
-            + ("(Zobrazuji posledních 25 záznamů)" if total > 25 else ""),
+            f"🗑️ What do you want to erase for **{player}**?\n"
+            + ("(Showing last 25 records)" if total > 25 else ""),
             view=view, ephemeral=True
         )
+
+
+    @app_commands.command(name="info", description="List available commands and what they do.")
+    @app_commands.guilds(GUILD)
+    async def info(self, interaction: discord.Interaction):
+        if not await _safe_defer(interaction, ephemeral=True): return
+        lines = [
+            "**Available commands:**",
+            "• `/powerenter` – Add a new record to the CSV and push to GitHub.",
+            "• `/powerplayer <player>` – Show player's progression (by teams) with step changes.",
+            "• `/powerplayervsplayer <player1> <player2> <team>` – Compare two players in a chosen team (tank/rocket/air).",
+            "• `/powertopplayer` – Leaderboard computed from the latest entries per player.",
+            "• `/powererase <player>` – Delete all or selected records for a player (interactive picker with confirmation).",
+            "• `/powerdebug` – Basic diagnostics of local/remote CSV (if enabled)."
+        ]
+        await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+
 # ====== UI View pro /storm ======
 
 # ====== UI View pro /powererase ======
@@ -510,22 +528,22 @@ class EraseModeView(discord.ui.View):
 
     async def interaction_guard(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            await interaction.response.send_message("This selection is not yours.", ephemeral=True)
             return False
         return True
 
-    @discord.ui.button(label="🗑️ Smazat vše", style=discord.ButtonStyle.danger, custom_id="erase_all")
+    @discord.ui.button(label="🗑️ Delete all", style=discord.ButtonStyle.danger, custom_id="erase_all")
     async def erase_all(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
         # Potvrzovací view pro smazání všeho
         view = EraseAllConfirmView(self.owner_id, self.player, self.parent)
-        await interaction.response.edit_message(content=f"⚠️ Opravdu smazat **všechny** záznamy hráče **{self.player}**?", view=view)
+        await interaction.response.edit_message(content=f"⚠️ Really delete **all** records of player **{self.player}**?", view=view)
 
-    @discord.ui.button(label="📝 Vybrat záznamy", style=discord.ButtonStyle.primary, custom_id="erase_pick")
+    @discord.ui.button(label="📝 Pick records", style=discord.ButtonStyle.primary, custom_id="erase_pick")
     async def erase_pick(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
         view = EraseRecordPickerView(self.owner_id, self.player, self.rows, self.parent, total_count=self.total_count)
-        await interaction.response.edit_message(content=f"Vyber záznamy hráče **{self.player}** k odstranění:", view=view)
+        await interaction.response.edit_message(content=f"Pick records for player **{self.player}** to delete:", view=view)
 
 
 class EraseAllConfirmView(discord.ui.View):
@@ -537,11 +555,11 @@ class EraseAllConfirmView(discord.ui.View):
 
     async def interaction_guard(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            await interaction.response.send_message("This selection is not yours.", ephemeral=True)
             return False
         return True
 
-    @discord.ui.button(label="✅ Potvrdit smazání všeho", style=discord.ButtonStyle.danger, custom_id="erase_all_confirm")
+    @discord.ui.button(label="✅ Confirm deleting all", style=discord.ButtonStyle.danger, custom_id="erase_all_confirm")
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
 
@@ -550,7 +568,7 @@ class EraseAllConfirmView(discord.ui.View):
         mask = df["player"].str.casefold() == self.player.casefold()
         count = int(mask.sum())
         if count == 0:
-            await interaction.response.edit_message(content=f"ℹ️ Hráč **{self.player}** už nemá žádné záznamy.", view=None)
+            await interaction.response.edit_message(content=f"ℹ️ Player **{self.player}** has no records left.", view=None)
             self.stop(); return
 
         df2 = df[~mask].copy()
@@ -560,13 +578,13 @@ class EraseAllConfirmView(discord.ui.View):
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
         _rebuild_players_cache_from_local()
 
-        await interaction.response.edit_message(content=f"🧹 Smazáno **{count}** záznamů hráče **{self.player}**.\nCommit: `{sha}`", view=None)
+        await interaction.response.edit_message(content=f"🧹 Deleted **{count}** records for player **{self.player}**.\nCommit: `{sha}`", view=None)
         self.stop()
 
-    @discord.ui.button(label="Zrušit", style=discord.ButtonStyle.secondary, custom_id="erase_all_cancel")
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="erase_all_cancel")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
-        await interaction.response.edit_message(content="Zrušeno.", view=None)
+        await interaction.response.edit_message(content="Cancelled.", view=None)
         self.stop()
 
 
@@ -591,11 +609,11 @@ class EraseRecordPickerView(discord.ui.View):
         options = []
         for i, r in enumerate(self.rows):
             options.append(discord.SelectOption(label=r["label"][:100], value=str(i)))
-        select = discord.ui.Select(placeholder="Vyber záznamy k odstranění", min_values=1, max_values=min(25, len(options)), options=options, custom_id="erase_rows_select")
+        select = discord.ui.Select(placeholder="Pick records to delete", min_values=1, max_values=min(25, len(options)), options=options, custom_id="erase_rows_select")
 
         async def on_select(interaction: discord.Interaction):
             if interaction.user.id != self.owner_id:
-                await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+                await interaction.response.send_message("This selection is not yours.", ephemeral=True)
                 return
             self.selected_idx = set(int(v) for v in select.values)
             await interaction.response.defer()  # nic needitujeme
@@ -605,15 +623,15 @@ class EraseRecordPickerView(discord.ui.View):
 
     async def interaction_guard(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            await interaction.response.send_message("This selection is not yours.", ephemeral=True)
             return False
         return True
 
-    @discord.ui.button(label="🗑️ Smazat vybrané", style=discord.ButtonStyle.danger, custom_id="erase_rows_confirm")
+    @discord.ui.button(label="🗑️ Delete selected", style=discord.ButtonStyle.danger, custom_id="erase_rows_confirm")
     async def erase_selected(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
         if not self.selected_idx:
-            await interaction.response.send_message("Vyber minimálně jeden záznam.", ephemeral=True)
+            await interaction.response.send_message("Pick at least one record.", ephemeral=True)
             return
 
         # připrav seznam timestampů vybraných záznamů
@@ -632,7 +650,7 @@ class EraseRecordPickerView(discord.ui.View):
         to_delete = (mask_player & mask_ts)
         count = int(to_delete.sum())
         if count == 0:
-            await interaction.response.edit_message(content="ℹ️ Vybrané řádky už nejsou v CSV.", view=None)
+            await interaction.response.edit_message(content="ℹ️ Selected rows are no longer in CSV.", view=None)
             self.stop(); return
 
         df2 = df[~to_delete].copy()
@@ -642,14 +660,14 @@ class EraseRecordPickerView(discord.ui.View):
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
         _rebuild_players_cache_from_local()
 
-        more_note = " (zobrazeno bylo jen posledních 25)" if self.total_count > 25 else ""
-        await interaction.response.edit_message(content=f"🧹 Smazáno **{count}** záznamů hráče **{self.player}**{more_note}.\nCommit: `{sha}`", view=None)
+        more_note = " (only last 25 were displayed)" if self.total_count > 25 else ""
+        await interaction.response.edit_message(content=f"🧹 Deleted **{count}** records for player **{self.player}**{more_note}.\nCommit: `{sha}`", view=None)
         self.stop()
 
-    @discord.ui.button(label="Zrušit", style=discord.ButtonStyle.secondary, custom_id="erase_rows_cancel")
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="erase_rows_cancel")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.interaction_guard(interaction): return
-        await interaction.response.edit_message(content="Zrušeno.", view=None)
+        await interaction.response.edit_message(content="Cancelled.", view=None)
         self.stop()
 class StormPickerView(discord.ui.View):
     """Stránkovaný výběr hráčů (Select má limit 25 položek). Po 'Hotovo' vybereš počet týmů a bot vygeneruje rozdělení."""
@@ -679,7 +697,7 @@ class StormPickerView(discord.ui.View):
         options = []
         for name in self._page_slice():
             label = name
-            desc = "Vybrán" if name in self.selected else "Klikni pro výběr"
+            desc = "Vybrán" if name in self.selected else "Click to select"
             options.append(discord.SelectOption(label=label, value=label, description=desc))
 
         select = discord.ui.Select(
@@ -692,7 +710,7 @@ class StormPickerView(discord.ui.View):
 
         async def on_select(interaction: discord.Interaction):
             if interaction.user.id != self.owner_id:
-                await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+                await interaction.response.send_message("This selection is not yours.", ephemeral=True)
                 return
             for v in select.values:
                 self.selected.add(v)
@@ -719,7 +737,7 @@ class StormPickerView(discord.ui.View):
 
         async def on_team_select(interaction: discord.Interaction):
             if interaction.user.id != self.owner_id:
-                await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+                await interaction.response.send_message("This selection is not yours.", ephemeral=True)
                 return
             self.team_count = int(team_select.values[0])
             await interaction.response.edit_message(
@@ -731,10 +749,10 @@ class StormPickerView(discord.ui.View):
         self.add_item(team_select)
 
     # ----- Buttons -----
-    @discord.ui.button(label="⬅️ Předchozí", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="⬅️ Previous", style=discord.ButtonStyle.secondary)
     async def prev_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            await interaction.response.send_message("This selection is not yours.", ephemeral=True)
             return
         if self.page > 0:
             self.page -= 1
@@ -743,10 +761,10 @@ class StormPickerView(discord.ui.View):
         else:
             await interaction.response.defer()
 
-    @discord.ui.button(label="Další ➡️", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Next ➡️", style=discord.ButtonStyle.secondary)
     async def next_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            await interaction.response.send_message("This selection is not yours.", ephemeral=True)
             return
         if (self.page + 1) * self.PAGE_SIZE < len(self.all_names):
             self.page += 1
@@ -755,10 +773,10 @@ class StormPickerView(discord.ui.View):
         else:
             await interaction.response.defer()
 
-    @discord.ui.button(label="🧹 Vyčistit výběr", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="🧹 Clear selection", style=discord.ButtonStyle.secondary)
     async def clear_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            await interaction.response.send_message("This selection is not yours.", ephemeral=True)
             return
         self.selected.clear()
         self._rebuild_select()
@@ -767,7 +785,7 @@ class StormPickerView(discord.ui.View):
     @discord.ui.button(label="✅ Hotovo", style=discord.ButtonStyle.success)
     async def done_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            await interaction.response.send_message("This selection is not yours.", ephemeral=True)
             return
         if len(self.selected) < 2:
             await interaction.response.send_message("Vyber aspoň 2 hráče.", ephemeral=True)
@@ -780,10 +798,10 @@ class StormPickerView(discord.ui.View):
             view=self
         )
 
-    @discord.ui.button(label="🛡️ Rozdělit týmy", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="🛡️ Split teams", style=discord.ButtonStyle.primary)
     async def build_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
+            await interaction.response.send_message("This selection is not yours.", ephemeral=True)
             return
         if not self.selected:
             await interaction.response.send_message("Nejsou vybraní hráči.", ephemeral=True)
@@ -800,7 +818,7 @@ class StormPickerView(discord.ui.View):
 
         picked = latest[latest["player"].isin(self.selected)].copy()
         if len(picked) < self.team_count + 2:
-            await interaction.response.send_message("⚠️ Málo vybraných hráčů pro rozdělení (potřeba alespoň 2 + počet týmů).", ephemeral=True)
+            await interaction.response.send_message("⚠️ Not enough selected players to split (need at least 2 + number of teams).", ephemeral=True)
             return
 
         picked = picked.sort_values("total", ascending=False).reset_index(drop=True)
@@ -826,8 +844,8 @@ class StormPickerView(discord.ui.View):
         out_lines = []
         out_lines.append(f"⚔️ Attack: 🛡️ {attackers.iloc[0]['player']}, 🛡️ {attackers.iloc[1]['player']}\n")
         for i, (cap_name, power, members) in enumerate(teams, start=1):
-            out_lines.append(f"👑 Kapitán Team {i}: {cap_name}")
-            out_lines.append(f"   🧑‍🤝‍🧑 Hráči: {', '.join(members) if members else '—'}")
+            out_lines.append(f"👑 Team {i} Captain: {cap_name}")
+            out_lines.append(f"   🧑‍🤝‍🧑 Players: {', '.join(members) if members else '—'}")
             out_lines.append(f"   🔋 Total power: {power:,.1f}\n")
 
         # 2) Edit ephemerální zprávy (zruší komponenty) – žádné mazání
