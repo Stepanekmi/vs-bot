@@ -325,7 +325,97 @@ class PowerCommands(commands.Cog):
         await interaction.followup.send(f"**{player}** — {headline}", file=file)
         await _send_long(interaction, "", lines)
 
-    
+    @app_commands.command(name="powerdebug", description="Detailní diagnostika načítání/syncu")
+    @app_commands.guilds(GUILD)
+    async def powerdebug(self, interaction: discord.Interaction):
+        if not await _safe_defer(interaction, ephemeral=True): return
+
+        report = []
+
+        # Základní info o souborech
+        try:
+            l_exists = os.path.exists(LOCAL_POWER_FILE)
+            l_size = os.path.getsize(LOCAL_POWER_FILE) if l_exists else 0
+            report.append(f"📄 Local file: `{LOCAL_POWER_FILE}`, exists={l_exists}, size={l_size}")
+        except Exception as e:
+            report.append(f"📄 Local file error: {e}")
+
+        # 1) Čtení LOCAL (syrové)
+        try:
+            ldf_raw = pd.read_csv(LOCAL_POWER_FILE, sep=None, engine="python")
+            report.append(f"Local RAW rows={len(ldf_raw)}")
+            report.append("Local RAW tail(3):\\n```\\n" + ldf_raw.tail(3).to_string(index=False) + "\\n```")
+        except Exception as e:
+            report.append(f"Local RAW read error: {e}")
+            ldf_raw = None
+
+        # 2) Čtení REMOTE (fetch -> tmp)
+            sha, size = get_remote_meta(REPO_POWER_PATH)
+            tmp = "_tmp_power.csv"
+            fetched = fetch_from_repo(REPO_POWER_PATH, tmp, prefer_api=True)
+            report.append(f"🌐 Remote: sha={sha}, size={size}, fetched={bool(fetched)}")
+
+        try:
+            rdf_raw = pd.read_csv(tmp, sep=None, engine="python") if fetched else None
+            if rdf_raw is not None:
+                report.append(f"Remote RAW rows={len(rdf_raw)}")
+                report.append("Remote RAW tail(3):\\n```\\n" + rdf_raw.tail(3).to_string(index=False) + "\\n```")
+            else:
+                report.append("Remote RAW: n/a")
+        except Exception as e:
+            report.append(f"Remote RAW read error: {e}")
+            rdf_raw = None
+
+        # 3) Parsování obou stran stejně jako _load_power_df (bez side-effectů)
+        def _parse_like_loader(df):
+            if df is None: return pd.DataFrame(columns=POWER_HEADER)
+            m = df.copy()
+            for c in POWER_HEADER:
+                if c not in m.columns:
+                    m[c] = None
+            m = m[POWER_HEADER].copy()
+            for c in ["tank","rocket","air","team4"]:
+                m[c] = pd.to_numeric(m[c], errors="coerce")
+            m["timestamp"] = pd.to_datetime(m["timestamp"], errors="coerce", utc=True)
+            m["player"] = m["player"].astype(str).str.strip()
+            m = m.dropna(subset=["timestamp"]).sort_values("timestamp")
+            return m
+
+        ldf = _parse_like_loader(ldf_raw)
+        rdf = _parse_like_loader(rdf_raw)
+
+        report.append(f"Local PARSED rows={len(ldf)}")
+        report.append("Local PARSED tail(3):\\n```\\n" + (ldf.tail(3).to_string(index=False) if not ldf.empty else "—") + "\\n```")
+        report.append(f"Remote PARSED rows={len(rdf)}")
+        report.append("Remote PARSED tail(3):\\n```\\n" + (rdf.tail(3).to_string(index=False) if not rdf.empty else "—") + "\\n```")
+
+        # 4) Merge simulace (bez zápisu)
+        merged = pd.concat([ldf, rdf], ignore_index=True)
+        before = len(merged)
+        merged = merged.drop_duplicates(subset=POWER_HEADER, keep="last").sort_values("timestamp")
+        report.append(f"Merge: concat={before}, after_dedup={len(merged)}")
+
+        # Rozdíly: co je v merged a není v local parsed
+        if not merged.empty and not ldf.empty:
+            diff = merged.merge(ldf.assign(_in_local=True), how="left", on=POWER_HEADER)
+            missing = diff[diff["_in_local"].isna()].drop(columns=["_in_local"])
+            if not missing.empty:
+                mx = missing.tail(5)
+                report.append("Rows present after MERGE but missing in Local PARSED (tail):\\n```\\n" + mx.to_string(index=False) + "\\n```")
+            else:
+                report.append("No rows missing in Local after MERGE.")
+        else:
+            report.append("Diff check skipped (empty frames).")
+
+        # 5) Poslední řádky po hráčích (rychlá kontrola)
+        try:
+            latest = merged.sort_values("timestamp").groupby("player", as_index=False).tail(1)
+            report.append("Latest by player (tail 10):\\n```\\n" + latest.sort_values("timestamp").tail(10).to_string(index=False) + "\\n```")
+        except Exception as e:
+            report.append(f"Latest by player error: {e}")
+
+        await interaction.followup.send("\\n".join(report), ephemeral=True)
+
 @app_commands.command(name="powerdebug", description="Detailní diagnostika načítání/syncu")
 @app_commands.guilds(GUILD)
 async def powerdebug(self, interaction: discord.Interaction):
