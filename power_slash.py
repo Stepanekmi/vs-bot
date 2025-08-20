@@ -22,6 +22,7 @@ import math
 from typing import Optional, List, Tuple
 
 import discord
+from discord import Interaction
 from discord import app_commands
 from discord.ext import commands
 
@@ -42,7 +43,7 @@ POWER_HEADER = ["player", "tank", "rocket", "air", "team4", "timestamp"]  # pevn
 PLAYERS_CACHE: List[str] = []
 
 # ====== HELPERY ======
-async def _safe_defer(interaction: discord.Interaction, ephemeral: bool = False) -> bool:
+async def _safe_defer(interaction: Interaction, ephemeral: bool = False) -> bool:
     try:
         if not interaction.response.is_done():
             await interaction.response.defer(thinking=True, ephemeral=ephemeral)
@@ -154,7 +155,7 @@ def _plot_series(df: pd.DataFrame, title: str) -> discord.File:
     buf = io.BytesIO(); fig.tight_layout(); fig.savefig(buf, format="png"); plt.close(fig); buf.seek(0)
     return discord.File(buf, filename="power.png")
 
-async def _send_long(interaction: discord.Interaction, header: str, lines: List[str]):
+async def _send_long(interaction: Interaction, header: str, lines: List[str]):
     chunk = (header + "\n") if header else ""
     for line in lines:
         if len(chunk) + len(line) + 1 > 1900:
@@ -253,7 +254,7 @@ class PowerCommands(commands.Cog):
     @app_commands.command(name="powerenter", description="Zapiš hodnoty power pro hráče")
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Jméno hráče", tank="Síla tanků", rocket="Síla raket", air="Síla letectva", team4="Síla 4. týmu (volitelné)")
-    async def powerenter(self, interaction: discord.Interaction, player: str, tank: str, rocket: str, air: str, team4: Optional[str] = None):
+    async def powerenter(self, interaction: Interaction, player: str, tank: str, rocket: str, air: str, team4: Optional[str] = None):
         if not await _safe_defer(interaction, ephemeral=True): return
 
         # 1) merge-up z GitHubu (API) – mimo autocomplete nevadí síť
@@ -298,7 +299,7 @@ class PowerCommands(commands.Cog):
     @app_commands.guilds(GUILD)
     @app_commands.describe(player="Jméno hráče")
     @app_commands.autocomplete(player=player_autocomplete)
-    async def powerplayer(self, interaction: discord.Interaction, player: str):
+    async def powerplayer(self, interaction: Interaction, player: str):
         if not await _safe_defer(interaction): return
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
 
@@ -327,7 +328,7 @@ class PowerCommands(commands.Cog):
 
     @app_commands.command(name="powerdebug", description="Detailní diagnostika načítání/syncu")
     @app_commands.guilds(GUILD)
-    async def powerdebug(self, interaction: discord.Interaction):
+    async def powerdebug(self, interaction: Interaction):
         if not await _safe_defer(interaction, ephemeral=True): return
 
         report = []
@@ -418,7 +419,7 @@ class PowerCommands(commands.Cog):
 
 @app_commands.command(name="powerdebug", description="Detailní diagnostika načítání/syncu")
 @app_commands.guilds(GUILD)
-async def powerdebug(self, interaction: discord.Interaction):
+async def powerdebug(self, interaction: Interaction):
     if not await _safe_defer(interaction, ephemeral=True): return
 
     report = []
@@ -509,7 +510,7 @@ async def powerdebug(self, interaction: discord.Interaction):
 
     @app_commands.command(name="powertopplayer", description="Všichni hráči podle součtu (tank+rocket+air)")
     @app_commands.guilds(GUILD)
-    async def powertopplayer(self, interaction: discord.Interaction):
+    async def powertopplayer(self, interaction: Interaction):
         if not await _safe_defer(interaction): return
         df = _load_power_df()
         if df.empty:
@@ -531,7 +532,7 @@ async def powerdebug(self, interaction: discord.Interaction):
         app_commands.Choice(name="rocket", value="rocket"),
         app_commands.Choice(name="air", value="air"),
     ])
-    async def powerplayervsplayer(self, interaction: discord.Interaction, player1: str, player2: str, team: app_commands.Choice[str]):
+    async def powerplayervsplayer(self, interaction: Interaction, player1: str, player2: str, team: app_commands.Choice[str]):
         if not await _safe_defer(interaction): return
         fetch_from_repo(REPO_POWER_PATH, LOCAL_POWER_FILE, prefer_api=True)
         df = _load_power_df()
@@ -571,7 +572,7 @@ async def powerdebug(self, interaction: discord.Interaction):
 
     @app_commands.command(name="storm", description="Vyber hráče (klikáním) a rozděl je do týmů")
     @app_commands.guilds(GUILD)
-    async def storm(self, interaction: discord.Interaction):
+    async def storm(self, interaction: Interaction):
         if not await _safe_defer(interaction, ephemeral=True): return
 
         names = _all_players()
@@ -590,7 +591,7 @@ async def powerdebug(self, interaction: discord.Interaction):
     # ---------- Diagnostika hráčů / cache ----------
     @app_commands.command(name="powernames", description="Diagnostika: kolik hráčů je v cache a kdo to je (prvních 30).")
     @app_commands.guilds(GUILD)
-    async def powernames(self, interaction: discord.Interaction):
+    async def powernames(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         cnt = len(PLAYERS_CACHE)
         sample = ", ".join(PLAYERS_CACHE[:30])
@@ -598,7 +599,7 @@ async def powerdebug(self, interaction: discord.Interaction):
 
     @app_commands.command(name="powerreloadnames", description="Znovu načti seznam hráčů z lokálního CSV (bez sítě).")
     @app_commands.guilds(GUILD)
-    async def powerreloadnames(self, interaction: discord.Interaction):
+    async def powerreloadnames(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         n = _rebuild_players_cache_from_local()
         if n >= 0:
@@ -646,7 +647,7 @@ class StormPickerView(discord.ui.View):
             custom_id=f"players_page_{self.page}"
         )
 
-        async def on_select(interaction: discord.Interaction):
+        async def on_select(interaction: Interaction):
             if interaction.user.id != self.owner_id:
                 await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
                 return
@@ -673,7 +674,7 @@ class StormPickerView(discord.ui.View):
             min_values=1, max_values=1, options=team_opts, custom_id="team_count"
         )
 
-        async def on_team_select(interaction: discord.Interaction):
+        async def on_team_select(interaction: Interaction):
             if interaction.user.id != self.owner_id:
                 await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
                 return
@@ -688,7 +689,7 @@ class StormPickerView(discord.ui.View):
 
     # ----- Buttons -----
     @discord.ui.button(label="⬅️ Předchozí", style=discord.ButtonStyle.secondary)
-    async def prev_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
+    async def prev_btn(self, interaction: Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
             return
@@ -700,7 +701,7 @@ class StormPickerView(discord.ui.View):
             await interaction.response.defer()
 
     @discord.ui.button(label="Další ➡️", style=discord.ButtonStyle.secondary)
-    async def next_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
+    async def next_btn(self, interaction: Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
             return
@@ -712,7 +713,7 @@ class StormPickerView(discord.ui.View):
             await interaction.response.defer()
 
     @discord.ui.button(label="🧹 Vyčistit výběr", style=discord.ButtonStyle.secondary)
-    async def clear_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
+    async def clear_btn(self, interaction: Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
             return
@@ -721,7 +722,7 @@ class StormPickerView(discord.ui.View):
         await interaction.response.edit_message(content="Výběr vyčištěn.", view=self)
 
     @discord.ui.button(label="✅ Hotovo", style=discord.ButtonStyle.success)
-    async def done_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
+    async def done_btn(self, interaction: Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
             return
@@ -737,7 +738,7 @@ class StormPickerView(discord.ui.View):
         )
 
     @discord.ui.button(label="🛡️ Rozdělit týmy", style=discord.ButtonStyle.primary)
-    async def build_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
+    async def build_btn(self, interaction: Interaction, _: discord.ui.Button):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("Tento výběr nepatří tobě.", ephemeral=True)
             return
